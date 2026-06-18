@@ -8,9 +8,9 @@
 
 ## About this project
 
-A learning and portfolio project that demonstrates detection engineering, SOAR automation, and SOC operations using only open-source tools. It is **not** a commercial product and is **not** deployed for any client. Everything runs locally on a single hypervisor host.
+A self-built SOC home lab demonstrating end-to-end detection engineering using open-source tools: log collection, behavioural analysis, MITRE ATT&CK mapping, case management, automated enrichment, and SOAR-driven response. Built as part of professional development in cybersecurity operations.
 
-Built as a clean-room exercise in lab — no shared code, configuration, or assets with any commercial project or academic capstone.
+Everything runs locally on a single hypervisor host. All attack simulations target only lab VMs you control.
 
 ---
 
@@ -70,14 +70,6 @@ Host: 16 GB RAM, VirtualBox 7.x, Windows 11.
 | Phase 4: Detection rules + MITRE mapping | Pending |
 | Phase 5: pfSense + Suricata integration | Pending |
 | Phase 6: Attack scenarios + documentation | Pending |
-
----
-
-## Notes
-
-This project is independent of any academic capstone work or commercial product. It exists purely as a learning artefact and a portfolio demonstration of open-source MDR architecture.
-
-All attack simulations target only lab VMs that you control. Do not run them against any system you do not own.
 
 ---
 
