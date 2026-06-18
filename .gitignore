@@ -1,0 +1,36 @@
+# Secrets
+*.key
+*.pem
+*.crt
+credentials/
+*-credentials.txt
+.env
+.env.*
+
+# Wazuh runtime data
+wazuh_indexer_ssl_certs/
+config/wazuh_indexer_ssl_certs/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Editor folders
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+*.egg-info/
+
+# Logs
+*.log
+logs/
+
+# Backup files
+*.bak
+*.orig
