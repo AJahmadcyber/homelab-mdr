@@ -29,7 +29,25 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 
 ---
 
-## Detection coverage
+## Build status
+
+| Phase | Component | Status |
+| --- | --- | --- |
+| 1 | siem VM + Ubuntu 22.04 base | ✅ Done |
+| 1 | Docker + Wazuh stack (Manager + Indexer + Dashboard) | ✅ Done |
+| 2 | Host hardening (UFW, fail2ban, SSH, DOCKER-USER iptables) | ✅ Done |
+| 2 | ISM retention (90d hot → delete) + replica tuning | ✅ Done |
+| 3 | Windows endpoint VM + Wazuh agent enrollment | ✅ Done |
+| 3 | Sysmon + sysmon-modular config | ⏳ In progress |
+| 3 | PowerShell Script Block Logging (4104) | ⏳ Planned |
+| 3 | ASR rules (LSASS, Office, web/email) | ⏳ Planned |
+| 3 | Defender Operational log ingestion | ⏳ Planned |
+| 4 | TheHive 5 + Cassandra + Cortex + n8n | ⏳ Planned |
+| 5 | pfSense + Suricata + custom detection rules | ⏳ Planned |
+
+Current state: **1 Windows endpoint actively reporting to Wazuh Manager**. Agent ID 001, status Active.
+
+---## Detection coverage
 
 Every rule maps to a MITRE ATT&CK technique.
 
