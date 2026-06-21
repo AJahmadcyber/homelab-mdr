@@ -38,16 +38,18 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | 2 | Host hardening (UFW, fail2ban, SSH, DOCKER-USER iptables) | ✅ Done |
 | 2 | ISM retention (90d hot → delete) + replica tuning | ✅ Done |
 | 3 | Windows endpoint VM + Wazuh agent enrollment | ✅ Done |
-| 3 | Sysmon + sysmon-modular config | ⏳ In progress |
-| 3 | PowerShell Script Block Logging (4104) | ⏳ Planned |
-| 3 | ASR rules (LSASS, Office, web/email) | ⏳ Planned |
-| 3 | Defender Operational log ingestion | ⏳ Planned |
+| 3 | Sysmon + sysmon-modular config | ✅ Done |
+| 3 | PowerShell Script Block Logging (4104) | ✅ Done |
+| 3 | ASR rules (LSASS, Office, web/email) | ✅ Done |
+| 3 | Defender Operational log ingestion | ✅ Done |
 | 4 | TheHive 5 + Cassandra + Cortex + n8n | ⏳ Planned |
 | 5 | pfSense + Suricata + custom detection rules | ⏳ Planned |
 
 Current state: **1 Windows endpoint actively reporting to Wazuh Manager**. Agent ID 001, status Active.
 
----## Detection coverage
+---
+
+## Detection coverage
 
 Every rule maps to a MITRE ATT&CK technique.
 
@@ -71,23 +73,10 @@ Every rule maps to a MITRE ATT&CK technique.
 | VM | OS | RAM | vCPU | Disk | Role |
 | --- | --- | --- | --- | --- | --- |
 | siem | Ubuntu Server 22.04 | 9 GB | 4 | 120 GB | Wazuh + n8n + TheHive + Cortex |
-| win-ep | Windows 10 | 3 GB | 2 | 60 GB | Endpoint with Sysmon + ASR |
+| win-ep | Windows 10 | 2 GB | 2 | 60 GB | Endpoint with Sysmon + ASR |
 | fw | pfSense 2.7 | 512 MB | 1 | 16 GB | Gateway + Suricata IDS |
 
 Host: 16 GB RAM, VirtualBox 7.x, Windows 11.
-
----
-
-## Project status
-
-| Phase | Status |
-| --- | --- |
-| Phase 1: Wazuh stack deployment | Done |
-| Phase 2: Windows endpoint + Sysmon | In progress |
-| Phase 3: TheHive + Cortex + n8n | Pending |
-| Phase 4: Detection rules + MITRE mapping | Pending |
-| Phase 5: pfSense + Suricata integration | Pending |
-| Phase 6: Attack scenarios + documentation | Pending |
 
 ---
 
