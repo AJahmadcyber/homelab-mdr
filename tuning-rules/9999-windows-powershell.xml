@@ -1,0 +1,73 @@
+<!--
+  ============================================================
+  Custom Wazuh detection rules for PowerShell abuse
+  ============================================================
+  File:        0100-windows-powershell.xml
+  ID range:    100100 - 100199
+  MITRE:       T1059.001 (PowerShell), T1027 (Obfuscated Files),
+               T1105 (Ingress Tool Transfer)
+  Tested by:   testing/T001-T1059.001-obfuscated-powershell.md
+  Deployment:  /var/ossec/etc/rules/0100-windows-powershell.xml
+  ============================================================
+
+  Gap addressed:
+  Default Wazuh rule 91837 matches Invoke-Expression patterns only.
+  These rules add coverage for:
+    - Base64 EncodedCommand invocation (powershell -enc ...)
+    - WebClient / DownloadString cradles (T1105 staging)
+    - FromBase64String decoding in script content
+-->
+
+<group name="windows,powershell,attack.t1059.001,">
+
+  <!--
+    Rule 100100 — PowerShell launched with -EncodedCommand
+    Catches the most common Base64 obfuscation pattern.
+    Telemetry source: Sysmon Event 1 (process create) OR 4104 script block.
+  -->
+  <rule id="100100" level="10">
+    <if_sid>91802</if_sid>
+    <field name="win.eventdata.scriptBlockText" type="pcre2">(?i)-EncodedCommand|-enc\s+[A-Za-z0-9+/=]{20,}</field>
+    <description>PowerShell launched with -EncodedCommand (Base64 obfuscation) [T1059.001/T1027]</description>
+    <mitre>
+      <id>T1059.001</id>
+      <id>T1027</id>
+    </mitre>
+    <group>powershell_obfuscation,</group>
+  </rule>
+
+  <!--
+    Rule 100101 — Base64 decoding inside a PowerShell script block
+    Catches FromBase64String, [Convert]::ToBase64String, etc.
+    Lower level than 100100 because Base64 has legitimate uses,
+    but still notable for SOC review.
+  -->
+  <rule id="100101" level="8">
+    <if_sid>91802</if_sid>
+    <field name="win.eventdata.scriptBlockText" type="pcre2">(?i)FromBase64String|\[Convert\]::ToBase64String</field>
+    <description>PowerShell script performs Base64 encode/decode (possible payload staging) [T1027]</description>
+    <mitre>
+      <id>T1027</id>
+      <id>T1059.001</id>
+    </mitre>
+    <group>powershell_obfuscation,</group>
+  </rule>
+
+  <!--
+    Rule 100102 — WebClient / DownloadString cradle in PowerShell
+    Classic Empire/Cobalt Strike/PoshC2 stager pattern.
+    High confidence because legitimate scripts rarely build cradles
+    with concatenation or Net.WebClient instantiation.
+  -->
+  <rule id="100102" level="12">
+    <if_sid>91802</if_sid>
+    <field name="win.eventdata.scriptBlockText" type="pcre2">(?i)Net\.WebClient|DownloadString|DownloadFile|Invoke-WebRequest.*-OutFile</field>
+    <description>PowerShell network download cradle detected (possible payload retrieval) [T1059.001/T1105]</description>
+    <mitre>
+      <id>T1059.001</id>
+      <id>T1105</id>
+    </mitre>
+    <group>powershell_cradle,</group>
+  </rule>
+
+</group>
