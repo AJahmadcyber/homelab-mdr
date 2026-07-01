@@ -60,10 +60,81 @@ Chronological build log of the lab. Each phase produces a working, verified mile
 ### Known issues
 - Wazuh agent 4.9.0 `syscollector.dll` crashes intermittently (vendor bug, auto-recovers, non-blocking)
 
-## Phase 4 — Case Management & SOAR (planned)
+## Phase 4 — Network Re-Architecture (pfSense in-path)
 
-TheHive 5 + Cassandra + Cortex + n8n. Wazuh alerts (level >= 7) trigger case creation with observable enrichment via Cortex (VirusTotal, AbuseIPDB).
+**Goal:** Introduce a stateful perimeter firewall between the lab VMs and the outside world, matching a realistic SOC network topology and unlocking future Suricata IDS + SOAR auto-block workflows.
 
-## Phase 5 — Network IDS & Detection Engineering (planned)
+### Topology delivered
 
-pfSense + Suricata in-path. Custom Wazuh rules with MITRE ATT&CK Navigator export.
+- Two host-only networks on the hypervisor:
+  - `vboxnet0` (192.168.56.0/24) — unused management legacy.
+  - `vboxnet1` (10.10.10.0/24) — new isolated LAN behind pfSense.
+- pfSense 2.7.2 VM with two interfaces:
+  - WAN (em0) — attached to VirtualBox NAT (10.0.2.15) for outbound internet.
+  - LAN (em1) — 10.10.10.1/24, gateway for the SOC lab subnet.
+- VMs migrated onto the LAN behind pfSense:
+  - siem — 10.10.10.10 (Wazuh Manager + Indexer + Dashboard).
+  - win-ep — 10.10.10.20 (Windows endpoint, Wazuh agent).
+- ThinkPad host reachable on the LAN at 10.10.10.2 for Dashboard access.
+
+### Firewall rules deployed (LAN interface)
+
+Aliases created for readability and future reuse:
+
+- `siem_host` (10.10.10.10)
+- `win_ep` (10.10.10.20)
+- `thinkpad_host` (10.10.10.2)
+- `wazuh_ports` (1514, 1515, 55000)
+
+Explicit allow rules:
+
+1. `win_ep` → `siem_host` on `wazuh_ports` (agent enrollment + comms).
+2. `thinkpad_host` → `siem_host` on 443 (Wazuh Dashboard HTTPS).
+3. Default `LAN → any` allow retained for outbound internet.
+4. Default deny on WAN inbound retained (system default).
+
+Logging enabled on both explicit rules for future audit and Suricata correlation.
+
+### Key lessons
+
+- Rule load order in pfSense depends on filename prefix; custom firewall rules that reference default gateways must load after the default policy is established.
+- Static WAN gateway config remained after switching to NAT-backed WAN; had to `route delete` the stale gateway and force `dhclient` renewal to obtain the correct default route.
+- Windows endpoints migrated onto a new subnet default to the Public network profile — ICMP and file/print discovery blocked. Changed to Private for lab connectivity.
+- Wazuh agent 4.9 remembers its manager address in `ossec.conf`; a `.NET WriteAllLines` write with UTF-8 no-BOM was required to update it cleanly.
+
+### Verified end-to-end
+
+- Wazuh agent on win-ep reconnected automatically to Manager after IP change.
+- Dashboard reachable from ThinkPad at https://10.10.10.10 through the LAN.
+- Alert pipeline confirmed: Sysmon + PowerShell 4104 + Defender events flowing from win-ep through pfSense to the Manager (343 alerts logged during Phase 4 validation window).
+- Custom rules 100100-100102 from Phase 3 continue to fire on obfuscated PowerShell test patterns.
+
+### Evidence
+
+Screenshots documenting Phase 4 completion are in `docs/evidence/phase4/`:
+
+- `01a-pfsense-dashboard-top.png` — pfSense 2.7.2 Dashboard: System Information + Interfaces (WAN 10.0.2.15, LAN 10.10.10.1, both up)
+- `01b-pfsense-dashboard-bottom.png` — Resource utilization: uptime, CPU, memory, disk
+- `02-firewall-rules-lan.png` — LAN interface rules: Anti-Lockout + 2 explicit allow rules (Wazuh comms, Dashboard) + defaults, with logging enabled on custom rules
+- `03a-firewall-aliases-ip.png` — Host aliases (siem_host, thinkpad_host, win_ep)
+- `03b-firewall-aliases-ports.png` — Port alias (wazuh_ports: 1514, 1515, 55000)
+- `04-wazuh-dashboard-overview.png` — Wazuh Overview after migration: 1 agent Active, 343 alerts in last 24h
+- `05-discover-winep-sysmon.png` — Discover view: 140 Sysmon events in 30 min from `agent.ip: 10.10.10.20`, confirming end-to-end pipeline through the firewall
+
+### Snapshots
+
+- `pfsense` — phase4-baseline (fresh install + WAN NAT + LAN 10.10.10.1/24)
+- `siem` — phase4-migrated-to-lan (Wazuh stack running on 10.10.10.10)
+- `win-ep` — phase4-migrated-to-lan (Sysmon + agent Active on 10.10.10.20)
+
+## Phase 5 — Suricata IDS Integration (planned)
+
+Suricata deployed on pfSense in inline or IPS mode. Alerts forwarded via syslog to the Wazuh Manager and normalized through custom decoders. Focus areas: network-level detection for lateral movement (T1021), port scanning (T1046), and C2 beaconing patterns.
+
+## Phase 6 — Case Management and SOAR (planned)
+
+TheHive 5 + Cassandra + Cortex + n8n. Wazuh alerts of level 7 or higher trigger case creation with observable enrichment through Cortex analyzers (VirusTotal, AbuseIPDB, MISP). n8n workflows implement automated response actions, including pfSense API-driven auto-block for high-confidence indicators.
+
+## Phase 7 — GentleKiller Ransomware Test Case (planned)
+
+Full-stack detection-and-response exercise against a modern ransomware profile. Threat intelligence research, MITRE ATT&CK mapping (T1486, T1490, T1489 and related), simulated behavior on win-ep, and end-to-end validation across Sysmon telemetry, Suricata network signatures, Wazuh custom rules, TheHive case handling, and n8n auto-block workflows. Deliberately scheduled last so it exercises the complete stack.

@@ -42,10 +42,13 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | 3 | PowerShell Script Block Logging (4104) | ✅ Done |
 | 3 | ASR rules (LSASS, Office, web/email) | ✅ Done |
 | 3 | Defender Operational log ingestion | ✅ Done |
-| 4 | TheHive 5 + Cassandra + Cortex + n8n | ⏳ Planned |
-| 5 | pfSense + Suricata + custom detection rules | ⏳ Planned |
-
-Current state: **1 Windows endpoint actively reporting to Wazuh Manager**. Agent ID 001, status Active.
+| 4 | pfSense firewall + network re-architecture (host-only LAN + WAN NAT) | ✅ Done |
+| 4 | siem + win-ep migrated behind pfSense LAN (10.10.10.0/24) | ✅ Done |
+| 4 | Explicit firewall rules for Wazuh comms (agent + dashboard) | ✅ Done |
+| 5 | Suricata IDS on pfSense + Wazuh integration | ⏳ Planned |
+| 6 | TheHive 5 + Cassandra + Cortex + n8n | ⏳ Planned |
+| 7 | GentleKiller ransomware full-stack test case (T1486) | ⏳ Planned |
+Current state: **pfSense in-path**. siem (10.10.10.10) + win-ep (10.10.10.20) on isolated LAN behind firewall. Wazuh agent Active, all telemetry pipeline verified end-to-end.
 
 ---
 
@@ -74,7 +77,7 @@ Every rule maps to a MITRE ATT&CK technique.
 | --- | --- | --- | --- | --- | --- |
 | siem | Ubuntu Server 22.04 | 9 GB | 4 | 120 GB | Wazuh + n8n + TheHive + Cortex |
 | win-ep | Windows 10 | 2 GB | 2 | 60 GB | Endpoint with Sysmon + ASR |
-| fw | pfSense 2.7 | 512 MB | 1 | 16 GB | Gateway + Suricata IDS |
+| pfSense | FreeBSD 14 (pfSense 2.7.2) | 1 GB | 1 | 8 GB | Perimeter firewall + gateway |
 
 Host: 16 GB RAM, VirtualBox 7.x, Windows 11.
 
