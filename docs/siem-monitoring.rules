@@ -1,0 +1,52 @@
+# ==============================================
+# SIEM Self-Monitoring Audit Rules
+# Focus: T1562 (Impair Defenses), T1611 (Container Escape),
+#        T1610 (Deploy Container), T1548 (Privilege Escalation)
+# ==============================================
+
+# --- Docker socket access (container escape, unauthorized container ops) ---
+-w /var/run/docker.sock -p rwxa -k docker_socket_access
+
+# --- Docker daemon config & Docker binaries ---
+-w /etc/docker/ -p wa -k docker_config_change
+-w /usr/bin/docker -p x -k docker_exec
+-w /usr/bin/dockerd -p x -k dockerd_exec
+
+# --- Wazuh agent tampering (T1562.001) ---
+-w /var/ossec/etc/ossec.conf -p wa -k wazuh_config_change
+-w /var/ossec/bin/ -p wa -k wazuh_binary_change
+
+# --- SSH server config (T1098) ---
+-w /etc/ssh/sshd_config -p wa -k sshd_config_change
+-w /etc/ssh/sshd_config.d/ -p wa -k sshd_config_change
+
+# --- Sudoers (T1548.003 Privilege Escalation) ---
+-w /etc/sudoers -p wa -k sudoers_change
+-w /etc/sudoers.d/ -p wa -k sudoers_change
+
+# --- User/group management (T1136 Create Account) ---
+-w /etc/passwd -p wa -k user_management
+-w /etc/shadow -p wa -k credential_change
+-w /etc/group -p wa -k user_management
+
+# --- Cron jobs (T1053.003 Scheduled Task/Cron) ---
+-w /etc/crontab -p wa -k cron_change
+-w /etc/cron.d/ -p wa -k cron_change
+-w /var/spool/cron/ -p wa -k cron_change
+
+# --- systemd unit files (T1543.002 Systemd Service) ---
+-w /etc/systemd/system/ -p wa -k systemd_change
+-w /lib/systemd/system/ -p wa -k systemd_change
+
+# --- Firewall (UFW/iptables) config changes ---
+-w /etc/ufw/ -p wa -k firewall_change
+-w /etc/iptables/ -p wa -k firewall_change
+
+# --- Suspicious command execution ---
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/nc -k netcat_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/ncat -k netcat_exec
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/wget -k download_tool
+-a always,exit -F arch=b64 -S execve -F path=/usr/bin/curl -k download_tool
+
+# Make rules immutable (require reboot to change)
+# -e 2   ← نتركه فارغ للتجربة، نفعّله لاحقاً

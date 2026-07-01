@@ -127,6 +127,64 @@ Screenshots documenting Phase 4 completion are in `docs/evidence/phase4/`:
 - `siem` — phase4-migrated-to-lan (Wazuh stack running on 10.10.10.10)
 - `win-ep` — phase4-migrated-to-lan (Sysmon + agent Active on 10.10.10.20)
 
+## Phase 4.5 — SIEM Self-Monitoring
+
+**Goal:** Give the SIEM host visibility into itself. In real SOCs the SIEM is a high-value target — attackers often try to disable logging or tamper with the Manager before broader lateral movement. A blind SIEM cannot report its own compromise.
+
+### What was deployed
+
+- Wazuh agent 4.9.0 installed on siem VM (agent ID 002, name `siem-self`), self-enrolled to the local Manager on 10.10.10.10.
+- `auditd` installed with a custom ruleset at `/etc/audit/rules.d/siem-monitoring.rules` covering:
+  - Docker socket + daemon binaries + config directory (T1611, T1610)
+  - Wazuh config file + agent binaries (T1562.001)
+  - SSH server configuration (T1098)
+  - `/etc/sudoers` and drop-in directory (T1548.003)
+  - `/etc/passwd`, `/etc/shadow`, `/etc/group` (T1136, T1098)
+  - Cron and systemd unit files (T1053.003, T1543.002)
+  - UFW and iptables config (T1562.004)
+  - `execve` syscalls for netcat, wget, curl (download and post-exploitation tools)
+- Wazuh agent extended with two additional `localfile` blocks:
+  - `<log_format>audit</log_format>` on `/var/log/audit/audit.log`
+  - `<log_format>journald</log_format>` filtered on `_SYSTEMD_UNIT=docker.service`
+- Custom Wazuh rules `100200-100205` deployed at `/var/ossec/etc/rules/9998-siem-self-monitoring.xml`, each keyed to an audit rule and mapped to a MITRE technique.
+
+### Custom rules
+
+| Rule ID | Level | audit.key | MITRE technique |
+| --- | --- | --- | --- |
+| 100200 | 7 | wazuh_config_change | T1562.001 Disable or Modify Tools |
+| 100201 | 10 | docker_socket_access | T1611 Escape to Host / T1610 Deploy Container |
+| 100202 | 9 | sudoers_change | T1548.003 Sudo and Sudo Caching |
+| 100203 | 9 | credential_change | T1098 Account Manipulation |
+| 100204 | 8 | systemd_change | T1543.002 Systemd Service |
+| 100205 | 8 | firewall_change | T1562.004 Disable or Modify System Firewall |
+
+Filename prefix `9998-` chosen so the file loads after Wazuh's default `0365-auditd_rules.xml`, so the `if_sid` reference to the base `80700` decoder is resolvable at load time.
+
+### Key lessons
+
+- The Wazuh service user on Ubuntu is `wazuh` and is not in the `adm` group by default; without `usermod -aG adm wazuh` the agent silently fails to read `/var/log/audit/audit.log` and only journald ingestion appears to work.
+- A stale second `wazuh-logcollector` process can hang from an earlier `apt install`; if audit ingestion "should" work but nothing arrives, kill leftover Wazuh processes with `pkill -9 -f wazuh-` before restarting the agent.
+- After adding custom rules on the Manager, a container restart via `docker compose restart` is more reliable than `/var/ossec/bin/wazuh-control restart` — the latter occasionally leaves daemons in a half-stopped state where `wazuh-analysisd` never comes back up.
+
+### Verified end-to-end
+
+- `agent_control -lc` shows both agents Active: 001 (win-ep) and 002 (siem-self).
+- Test: `sudo touch /var/ossec/etc/ossec.conf` → auditd logs `key=wazuh_config_change` → Wazuh Manager fires rule 100200 (level 7, T1562.001) → alert visible in Discover with full auditd metadata (auid, uid, exe, command, cwd).
+- MITRE ATT&CK dashboard now shows Defense Evasion / Privilege Escalation / Persistence coverage across both agents.
+
+### Evidence
+
+Screenshots documenting Phase 4.5 completion are in `docs/evidence/phase4.5/`:
+
+- `06-siem-self-audit-rule-100200.png` — Discover: alert from siem-self, rule 100200, T1562.001, full auditd event data
+- `07-wazuh-agents-two-active.png` — Endpoints Summary: 2 agents Active (win-ep on Windows 10, siem-self on Ubuntu 22.04.5 LTS)
+- `08-mitre-attack-coverage.png` — MITRE ATT&CK dashboard showing tactic coverage: Defense Evasion, Privilege Escalation, Persistence, Execution, Initial Access
+
+### Snapshots
+
+- `siem` — phase4.5-self-monitoring-complete (Wazuh agent 002 running, auditd rules loaded, custom rules 100200-100205 firing)
+
 ## Phase 5 — Suricata IDS Integration (planned)
 
 Suricata deployed on pfSense in inline or IPS mode. Alerts forwarded via syslog to the Wazuh Manager and normalized through custom decoders. Focus areas: network-level detection for lateral movement (T1021), port scanning (T1046), and C2 beaconing patterns.

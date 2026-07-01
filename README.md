@@ -45,6 +45,8 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | 4 | pfSense firewall + network re-architecture (host-only LAN + WAN NAT) | ✅ Done |
 | 4 | siem + win-ep migrated behind pfSense LAN (10.10.10.0/24) | ✅ Done |
 | 4 | Explicit firewall rules for Wazuh comms (agent + dashboard) | ✅ Done |
+| 4.5 | Wazuh agent on siem itself (self-monitoring, agent 002) | ✅ Done |
+| 4.5 | auditd + custom rules for T1562/T1611/T1610/T1548 detection | ✅ Done |
 | 5 | Suricata IDS on pfSense + Wazuh integration | ⏳ Planned |
 | 6 | TheHive 5 + Cassandra + Cortex + n8n | ⏳ Planned |
 | 7 | GentleKiller ransomware full-stack test case (T1486) | ⏳ Planned |
