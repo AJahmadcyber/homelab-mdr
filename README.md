@@ -50,7 +50,7 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | 5 | Suricata IDS on pfSense + Wazuh integration | ⏳ Planned |
 | 6 | TheHive 5 + Cassandra + Cortex + n8n | ⏳ Planned |
 | 7 | GentleKiller ransomware full-stack test case (T1486) | ⏳ Planned |
-Current state: **pfSense in-path**. siem (10.10.10.10) + win-ep (10.10.10.20) on isolated LAN behind firewall. Wazuh agent Active, all telemetry pipeline verified end-to-end.
+Current state: **pfSense in-path + SIEM self-monitoring**. siem (10.10.10.10) + win-ep (10.10.10.20) on isolated LAN behind firewall. Two Wazuh agents Active (win-ep 001, siem-self 002), custom detection rules covering PowerShell obfuscation (100100-100102) and SIEM tampering (100200-100205).
 
 ---
 
@@ -77,7 +77,7 @@ Every rule maps to a MITRE ATT&CK technique.
 
 | VM | OS | RAM | vCPU | Disk | Role |
 | --- | --- | --- | --- | --- | --- |
-| siem | Ubuntu Server 22.04 | 9 GB | 4 | 120 GB | Wazuh + n8n + TheHive + Cortex |
+| siem | Ubuntu Server 22.04 | 7 GB | 4 | 120 GB | Wazuh Manager + Indexer + Dashboard, self-monitoring agent (TheHive + Cortex + n8n planned Phase 6) |
 | win-ep | Windows 10 | 2 GB | 2 | 60 GB | Endpoint with Sysmon + ASR |
 | pfSense | FreeBSD 14 (pfSense 2.7.2) | 1 GB | 1 | 8 GB | Perimeter firewall + gateway |
 
