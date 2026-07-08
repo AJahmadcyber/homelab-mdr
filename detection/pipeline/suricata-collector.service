@@ -1,0 +1,16 @@
+[Unit]
+Description=Suricata eve alerts collector (PULL from pfSense to Wazuh)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/suricata-collector.sh
+Restart=always
+RestartSec=5
+User=root
+# Restart aggressively but avoid infinite tight loops if pfSense is unreachable
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target
