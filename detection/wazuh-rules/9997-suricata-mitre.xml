@@ -1,5 +1,4 @@
 <group name="suricata,ids,mitre,">
-
   <!-- Base: any Suricata alert routed through eve-alerts.json (builds on Wazuh 86601) -->
   <rule id="100300" level="5">
     <if_sid>86601</if_sid>
@@ -8,7 +7,6 @@
     <options>no_full_log</options>
     <group>suricata_alert,</group>
   </rule>
-
   <!-- T1046 Network Service Discovery: our custom SYN-scan rules (sid 1000001/1000002) -->
   <rule id="100301" level="7">
     <if_sid>100300</if_sid>
@@ -19,8 +17,7 @@
     </mitre>
     <group>recon,network_scan,attack.discovery,</group>
   </rule>
-
-  <!-- ET SCAN category (community scan signatures) -> also T1046 -->
+  <!-- ET SCAN family (community scan signatures, substring match) -> T1046 -->
   <rule id="100302" level="6">
     <if_sid>100300</if_sid>
     <field name="alert.signature">ET SCAN</field>
@@ -30,7 +27,6 @@
     </mitre>
     <group>recon,network_scan,</group>
   </rule>
-
   <!-- High-severity Suricata alerts (Suricata severity 1) escalate -->
   <rule id="100303" level="10">
     <if_sid>100300</if_sid>
@@ -38,5 +34,14 @@
     <description>Suricata: HIGH severity alert - $(alert.signature)</description>
     <group>ids_high_severity,</group>
   </rule>
-
+  <!-- High-severity ET SCAN: preserve T1046 mapping (child of 100303 overrides generic escalation) -->
+  <rule id="100304" level="10">
+    <if_sid>100303</if_sid>
+    <field name="alert.signature">ET SCAN</field>
+    <description>Suricata: HIGH severity ET SCAN reconnaissance - $(alert.signature)</description>
+    <mitre>
+      <id>T1046</id>
+    </mitre>
+    <group>recon,network_scan,ids_high_severity,</group>
+  </rule>
 </group>
