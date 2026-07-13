@@ -1,8 +1,6 @@
 # Homelab MDR — SOC Detection Engineering Lab
 
-> An open-source detection-and-response home lab: endpoint and network telemetry feeding a Wazuh SIEM, Suricata IDS on pfSense, and custom detection rules mapped to MITRE ATT&CK — built and debugged end to end.
-
-**Repo:** https://github.com/AJahmadcyber/homelab-mdr
+![Architecture](docs/architecture.png)
 
 ---
 
@@ -10,7 +8,9 @@
 
 A hands-on lab demonstrating detection engineering with open-source tools: collecting Windows and Linux telemetry into a SIEM, running a network IDS at the firewall, writing custom detection rules, mapping every detection to MITRE ATT&CK, and hardening the monitoring stack itself. Everything is version-controlled, with each build phase documented alongside its design rationale.
 
-The lab is built in phases, infrastructure and visibility first, then detection content, then response automation. Phases 1–5 are implemented and working; Phases 6–7 are the planned roadmap.
+The lab is built in phases — infrastructure and visibility first, then detection content, then response automation. Phases 1–5 are implemented and working; Phases 6–7 are the planned roadmap.
+
+Everything runs locally on a single hypervisor host. All attack simulations target only lab VMs under my control.
 
 ---
 
@@ -23,7 +23,7 @@ The lab is built in phases, infrastructure and visibility first, then detection 
 | 3 — Windows telemetry | Sysmon (sysmon-modular), PowerShell Script Block Logging (4104), ASR, Defender → Wazuh agent | ✅ Implemented |
 | 4 — Network re-architecture | pfSense in-path gateway, LAN segmentation | ✅ Implemented |
 | 4.5 — SIEM self-monitoring | Agent on the SIEM + auditd, tamper detection for the monitoring stack | ✅ Implemented |
-| 5 — Network IDS | Suricata on pfSense + Suricata→Wazuh pipeline, MITRE-mapped alerts | ✅ Implemented |
+| 5 — Network IDS + DNS detection | Suricata on pfSense + Suricata→Wazuh pipeline, DNS tunneling + behavioral C2 beaconing | ✅ Implemented |
 | 6 — SOAR | TheHive 5 + Cassandra + Cortex + n8n, automated response with safety controls | ⏳ Roadmap |
 | 7 — Threat simulation | Ransomware profile (T1486) run end to end against the stack | ⏳ Roadmap |
 
@@ -37,49 +37,75 @@ pfSense sits in-path as the gateway, so all routed traffic passes through it —
 | --- | --- | --- | --- | --- |
 | `siem` | Ubuntu Server 22.04 | 7 GB | Wazuh Manager + Indexer + Dashboard (Docker Compose) | 10.10.10.10 |
 | `win-ep` | Windows 10 | 2 GB | Endpoint: Sysmon + ASR + Wazuh agent | 10.10.10.20 |
-| `pfSense` | pfSense 2.7.2 | 2 GB | In-path gateway + Suricata IDS | 10.10.10.1 |
+| `pfSense` | pfSense 2.7.2 | 2 GB | In-path gateway + Suricata 7.0.8 IDS | 10.10.10.1 |
 | Host | Windows + VirtualBox | 16 GB | Hypervisor | 10.10.10.2 |
 
-Network: LAN `10.10.10.0/24`, pfSense in-path (WAN via NAT).
+Network: LAN `10.10.10.0/24`, pfSense in-path (WAN via NAT), default-deny egress.
 
 ---
 
 ## Detection engineering
 
-Every custom rule is mapped to a MITRE ATT&CK technique, with IDs namespaced by phase.
+Every custom rule is mapped to a MITRE ATT&CK technique, with IDs namespaced by phase. The table below lists **detections I wrote and verified firing** — not planned coverage.
 
-**Custom detections (rules I wrote):**
+### Custom detections (rules I wrote)
 
-| Technique | Detection | Layer |
-| --- | --- | --- |
-| T1046 — Network Service Discovery | Custom Suricata SYN-scan signatures → Wazuh rules 100300–100303 | Network |
-| T1059.001 — PowerShell | Script Block Logging (Event 4104) → Wazuh rules 100100–100102 | Endpoint |
-| T1562.001 / T1611 / T1610 / T1548.003 / T1098 / T1543.002 / T1562.004 | SIEM self-monitoring (auditd) → Wazuh rules 100200–100205 | SIEM host |
+| Technique | Detection | Layer | Rule IDs |
+| --- | --- | --- | --- |
+| T1046 — Network Service Discovery | Custom Suricata SYN-scan signatures → Wazuh MITRE rules | Network | Suricata 1000001/1000002 → 100300–100304 |
+| T1048 — Exfiltration Over Alternative Protocol | Suricata long-subdomain DNS heuristic → Wazuh | Network (DNS) | Suricata 1000003 → 100305 |
+| T1071.004 — Application Layer Protocol: DNS | Behavioral C2 beaconing (rate-based, per eTLD+1) via custom SIEM-layer analyzer | SIEM (behavioral) | 100306 / 100307 |
+| T1059.001 — PowerShell | Script Block Logging (Event 4104) obfuscation patterns | Endpoint | 100100–100102 |
+| T1003.001 — LSASS Memory | comsvcs.dll MiniDump detected via **process command line (Sysmon EID 1)** — EID 10 is dropped by event-size limits, so EID 1 is the reliable path | Endpoint | 100311 |
+| Credential theft — Mimikatz | Mimikatz signatures in PowerShell 4104 script blocks | Endpoint | 100312 |
+| Credential theft — browser stores | Browser credential-store access (esentutl / Login Data) | Endpoint | 100313 |
+| T1562.001 / T1611 / T1610 / T1548.003 / T1098 / T1543.002 / T1562.004 | SIEM self-monitoring (auditd) — tamper detection for the monitoring stack | SIEM host | 100200–100205 |
 
-**Extended by Wazuh's community ruleset** (enabled, not authored here): broad Sysmon/Windows coverage — process creation, image loads, file drops, LSASS access, WinRM/Invoke-Command lateral movement, scheduled tasks, and more.
+### The DNS behavioral C2 detection (Phase 5)
 
-### The Suricata → Wazuh pipeline (Phase 5)
+Signature matching is the weakest tier of the Pyramid of Pain — rewrite the tool and the signature is dead. Rather than fingerprint a C2 tool, this detection targets an **intrinsic property of the C2 channel**: beaconing repetition. A rate-based analyzer groups DNS queries by `(src_ip, eTLD+1)` over a rolling window and flags parents whose query volume is anomalous, with an allowlist for legitimate high-volume domains.
+
+```
+Suricata eve.json (pfSense)
+  → edge filter: event_type=dns, type=query   (answers dropped at the sensor)
+  → dns-pull.sh — byte-offset batch pull via cron (no persistent tail, no collision with the alert collector)
+  → c2-detect.py — rate-based analyzer, eTLD+1 grouping, allowlist → SOAR-ready JSON alert
+  → /var/log/dns-analyzer/alerts.json  (Docker bind-mount into Wazuh)
+  → Wazuh JSON decoder → rules 100306/100307 → MITRE T1071.004
+```
+
+The analyzer lives in the SIEM layer, not the IDS — clean separation of concerns: Suricata reads the wire, the analyzer reasons about behavior, Wazuh correlates and alerts. Alerts are emitted as SOAR-ready JSON (`parent_domain` + `src_ip` + `query_count`) so Phase 6 can enrich and act on them directly.
+
+### The Suricata → Wazuh alert pipeline (Phase 5)
 
 ```
 Suricata eve.json (pfSense)
   → edge filter: event_type=alert only (protocol logs dropped at the sensor)
   → SSH stream, siem PULLs via a systemd service (Restart=always)
   → /var/log/suricata-pfsense/eve-alerts.json  (Docker bind-mount into Wazuh)
-  → Wazuh JSON decoder → custom rules 100300–100303 → MITRE T1046
+  → Wazuh JSON decoder → custom rules 100300–100305 → MITRE
 ```
 
 The collector runs as a systemd service on the SIEM (`Restart=always`), so it self-recovers from dropped connections, host suspend, or crashes — no manual watchdog.
+
+### Extended by community rulesets (enabled, not authored here)
+
+Broad coverage layered on top of the custom rules, so the lab isn't blind between custom detections:
+
+- **Sysmon-modular + Wazuh community (host-side):** LOLBAS abuse (certutil / mshta / wmic and similar living-off-the-land binaries), lateral movement (WinRM / Invoke-Command / PsExec patterns), scheduled tasks, image loads, file drops, LSASS *access* events.
+- **ET Open + Snort GPLv2 Community (network-side, Suricata):** broad network signature coverage for scanning, exploit, and malware traffic patterns.
 
 ---
 
 ## Key design decisions
 
 - **Detection before response.** Phase 5 is IDS-only by design; automated blocking is reserved for the SOAR phase with safety controls (block TTL, RFC1918 allowlist, circuit breaker).
-- **IDS, not inline IPS (for now).** Inline blocking is a single point of failure; start in detection, baseline, then promote high-confidence signatures. Blocking will run through the SOAR path — auditable and reversible.
+- **IDS, not inline IPS (for now).** Inline blocking is a single point of failure on one gateway; start in detection, baseline, then promote high-confidence signatures. Blocking will run through the SOAR path — auditable and reversible.
+- **Behavioral over signature for C2.** Signatures are brittle; rate-based beaconing targets a channel property that's costly to evade without breaking the C2.
 - **North-south vs east-west.** Suricata sees routed traffic only; same-subnet lateral movement is covered host-side by Wazuh + Sysmon. Layered visibility, not one sensor.
-- **Edge filtering.** Only actionable alerts are shipped to the SIEM; raw protocol logs stay at the sensor. Keeps the SIEM focused and storage bounded.
+- **DNS is the realistic C2 channel here.** Endpoints resolve through pfSense, so every DNS query is routed and Suricata-visible — unlike same-subnet traffic, which is L2-switched and never crosses the gateway.
+- **Edge filtering.** Only actionable data is shipped to the SIEM; raw protocol logs stay at the sensor. Keeps the SIEM focused and storage bounded.
 - **Monitor the monitor.** The SIEM is a high-value target, so tampering with the monitoring stack itself is detected (Phase 4.5).
-- **Resilient collection.** systemd service supervision instead of a manual loop, so the pipeline survives suspend/disconnect.
 
 Full rationale in [`docs/`](docs/).
 
@@ -92,19 +118,24 @@ homelab-mdr/
 ├── README.md
 ├── homelab-mdr-session-log.md          # phase-by-phase build journal
 ├── detection/
-│   ├── wazuh-rules/                     # custom Wazuh XML rules (100100–100303)
-│   │   ├── 9997-suricata-mitre.xml
-│   │   ├── 9998-siem-self-monitoring.xml
-│   │   └── 9999-windows-powershell.xml
+│   ├── wazuh-rules/                     # custom Wazuh XML rules
+│   │   ├── 9997-suricata-mitre.xml      # 100300–100307 (Suricata + DNS)
+│   │   ├── 9998-siem-self-monitoring.xml# 100200–100205 (SIEM tampering)
+│   │   ├── 9998-credential-access.xml   # 100310–100313 (LSASS / Mimikatz / stealer)
+│   │   └── 9999-windows-powershell.xml  # 100100–100102 (PowerShell 4104)
 │   ├── suricata-rules/                  # custom Suricata signatures
-│   │   ├── custom.rules                 # SID 1000001/1000002 (T1046)
-│   │   └── disablesid.conf
-│   └── pipeline/                        # Suricata → Wazuh collector
-│       ├── suricata-collector.sh        # PULL collector (runs on siem)
-│       └── suricata-collector.service   # systemd unit (Restart=always)
+│   │   ├── custom.rules                 # sid 1000001/1000002 (T1046), 1000003 (T1048)
+│   │   └── disablesid.conf              # sid 26470 (broken community rule)
+│   ├── dns-analyzer/                    # behavioral C2 analyzer
+│   │   └── c2-detect.py                 # rate-based DNS beaconing detector
+│   └── pipeline/                        # collectors
+│       ├── suricata-collector.sh        # alert PULL collector (systemd)
+│       ├── suricata-collector.service   # systemd unit (Restart=always)
+│       ├── dns-pull.sh                  # DNS query batch pull (cron)
+│       ├── dns-pull.cron                # 1-min schedule
+│       └── dns-analyzer.logrotate       # stream + alert retention
 └── docs/
-    ├── phase5-session2-pipeline.md
-    ├── phase5-stream-stability-pull-model.md
+    ├── architecture.svg / architecture.png
     └── evidence/                        # screenshots per phase
 ```
 
@@ -112,9 +143,9 @@ homelab-mdr/
 
 ## Roadmap
 
-- **Phase 6 — SOAR:** TheHive 5 (case management) + Cortex (observable enrichment) + n8n (orchestration). Alert → auto-create case → enrich → score → automated containment via the pfSense API, gated by block TTL, an RFC1918 allowlist, and a circuit breaker.
+- **Phase 6 — SOAR:** TheHive 5 (case management) + Cortex (observable enrichment) + n8n (orchestration). Alert → auto-create case → enrich → score → automated containment via the pfSense API, gated by block TTL, an RFC1918 allowlist, and a circuit breaker. The DNS analyzer already emits SOAR-ready JSON for this path.
 - **Phase 7 — Threat simulation:** a ransomware profile (T1486 and the surrounding chain) run against the full stack to validate detections end to end.
-- **Near-term:** protocol-log threat hunting (DNS tunneling, JA3-based C2), index retention policy, and promoting high-confidence signatures to inline IPS.
+- **Near-term detection extensions:** Shannon entropy and unique-subdomain cardinality on the DNS analyzer, JA3-based C2 hunting, index retention policy, and promoting high-confidence signatures to inline IPS via the SOAR path.
 
 ---
 
