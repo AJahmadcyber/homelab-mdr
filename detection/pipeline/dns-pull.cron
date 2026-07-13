@@ -1,0 +1,1 @@
+* * * * * root /usr/local/bin/dns-pull.sh >> /var/log/dns-analyzer/pull.log 2>&1

@@ -7,7 +7,8 @@
     <options>no_full_log</options>
     <group>suricata_alert,</group>
   </rule>
-  <!-- T1046 Network Service Discovery: our custom SYN-scan rules (sid 1000001/1000002) -->
+
+  <!-- T1046 Network Service Discovery: custom SYN-scan rules (sid 1000001/1000002) -->
   <rule id="100301" level="7">
     <if_sid>100300</if_sid>
     <field name="alert.signature_id">^1000001$|^1000002$</field>
@@ -17,6 +18,7 @@
     </mitre>
     <group>recon,network_scan,attack.discovery,</group>
   </rule>
+
   <!-- ET SCAN family (community scan signatures, substring match) -> T1046 -->
   <rule id="100302" level="6">
     <if_sid>100300</if_sid>
@@ -27,6 +29,7 @@
     </mitre>
     <group>recon,network_scan,</group>
   </rule>
+
   <!-- High-severity Suricata alerts (Suricata severity 1) escalate -->
   <rule id="100303" level="10">
     <if_sid>100300</if_sid>
@@ -34,6 +37,7 @@
     <description>Suricata: HIGH severity alert - $(alert.signature)</description>
     <group>ids_high_severity,</group>
   </rule>
+
   <!-- High-severity ET SCAN: preserve T1046 mapping (child of 100303 overrides generic escalation) -->
   <rule id="100304" level="10">
     <if_sid>100303</if_sid>
@@ -43,5 +47,35 @@
       <id>T1046</id>
     </mitre>
     <group>recon,network_scan,ids_high_severity,</group>
+  </rule>
+
+  <!-- T1048 Exfiltration Over Alternative Protocol: DNS tunneling (custom Suricata sid 1000003) -->
+  <rule id="100305" level="7">
+    <if_sid>100300</if_sid>
+    <field name="alert.signature_id">^1000003$</field>
+    <description>Suricata: Possible DNS tunneling / exfiltration over DNS - $(alert.signature)</description>
+    <mitre>
+      <id>T1048</id>
+    </mitre>
+    <group>exfiltration,dns_tunneling,attack.exfiltration,</group>
+  </rule>
+  <!-- T1071.004 C2 over DNS: rate-based beaconing (custom dns-analyzer, NOT Suricata-sourced) -->
+  <rule id="100306" level="10">
+    <decoded_as>json</decoded_as>
+    <field name="analyzer">dns-c2-ratebased</field>
+    <description>DNS C2 beaconing detected: $(src_ip) -> $(parent_domain) ($(query_count) queries)</description>
+    <mitre>
+      <id>T1071.004</id>
+    </mitre>
+    <group>c2,command_and_control,dns_beaconing,attack.command_and_control,</group>
+  </rule>
+  <rule id="100307" level="12">
+    <if_sid>100306</if_sid>
+    <field name="severity">high</field>
+    <description>DNS C2 beaconing HIGH severity: $(src_ip) -> $(parent_domain) ($(query_count) queries)</description>
+    <mitre>
+      <id>T1071.004</id>
+    </mitre>
+    <group>c2,command_and_control,dns_beaconing,ids_high_severity,</group>
   </rule>
 </group>

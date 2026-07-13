@@ -1,0 +1,18 @@
+/var/log/dns-analyzer/dns-queries.stream {
+    daily
+    rotate 3
+    compress
+    missingok
+    notifempty
+    copytruncate
+    su dnsanalyzer dnsanalyzer
+}
+/var/log/dns-analyzer/alerts.json {
+    daily
+    rotate 7
+    compress
+    missingok
+    notifempty
+    copytruncate
+    su dnsanalyzer dnsanalyzer
+}
