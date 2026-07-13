@@ -1,7 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 620" font-family="Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 860" font-family="Arial, sans-serif">
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
       <path d="M2 1L8 5L2 9" fill="none" stroke="#374151" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrflow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#0F62FE" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     </marker>
     <style>
       .title { font-size: 20px; font-weight: 700; fill: #111827; }
@@ -17,18 +20,30 @@
       .ep { fill: #F3E8FF; stroke: #6929C4; stroke-width: 1.5; }
       .net { fill: #F0FDF4; stroke: #10B981; stroke-width: 2.5; stroke-dasharray: 8 5; }
       .arrow { stroke: #374151; stroke-width: 1.8; fill: none; }
+      .flow { stroke: #0F62FE; stroke-width: 1.8; fill: none; }
       .badge-siem { fill: #0F4C81; }
       .badge-ep { fill: #4C1D95; }
+      .badge-ids { fill: #B45309; }
       .badge-text { font-size: 10px; font-weight: 700; fill: #FFFFFF; }
       .iface-bg { fill: #374151; }
       .comms-bg { fill: #FEF3C7; stroke: #F59E0B; stroke-width: 1.5; }
       .comms-title { font-size: 10px; font-weight: 700; fill: #92400E; }
       .comms-ports { font-size: 9px; fill: #92400E; font-family: 'Courier New', monospace; }
+      .sec-title { font-size: 15px; font-weight: 700; fill: #111827; }
+      .pipe-box { fill: #FFFFFF; stroke: #CBD5E1; stroke-width: 1.5; }
+      .pipe-src { fill: #FEF3E2; stroke: #F17800; stroke-width: 1.5; }
+      .pipe-mid { fill: #F1F5F9; stroke: #64748B; stroke-width: 1.5; }
+      .pipe-siem { fill: #E0F2FE; stroke: #0F62FE; stroke-width: 1.5; }
+      .pipe-out { fill: #ECFDF5; stroke: #10B981; stroke-width: 1.5; }
+      .pipe-step { font-size: 10.5px; font-weight: 600; fill: #1F2937; }
+      .pipe-sub { font-size: 9px; fill: #475569; font-family: 'Courier New', monospace; }
+      .mitre { font-size: 9.5px; font-weight: 700; fill: #B91C1C; font-family: 'Courier New', monospace; }
+      .pipe-tag { font-size: 10px; font-weight: 700; fill: #0F62FE; }
     </style>
   </defs>
 
   <!-- White background so it renders correctly on GitHub dark mode -->
-  <rect x="0" y="0" width="720" height="620" fill="#FFFFFF"/>
+  <rect x="0" y="0" width="720" height="860" fill="#FFFFFF"/>
 
   <text x="360" y="34" text-anchor="middle" class="title">SOC Detection Engineering Lab</text>
 
@@ -45,63 +60,117 @@
 
   <line x1="360" y1="166" x2="360" y2="192" class="arrow" marker-end="url(#arr)"/>
 
-  <!-- em0 (WAN) label inside a solid pill so it's always readable -->
+  <!-- em0 (WAN) label -->
   <rect x="379" y="172" width="72" height="18" rx="9" class="iface-bg"/>
   <text x="415" y="185" text-anchor="middle" class="iface">em0 (WAN)</text>
 
-  <!-- pfSense -->
-  <rect x="230" y="192" width="260" height="66" rx="8" class="fw"/>
-  <text x="360" y="216" text-anchor="middle" class="h">pfSense 2.7.2 firewall</text>
-  <text x="360" y="234" text-anchor="middle" class="ip">WAN 10.0.2.15  |  LAN 10.10.10.1</text>
-  <text x="360" y="250" text-anchor="middle" class="lbl">Stateful filter + explicit LAN allows + logging</text>
+  <!-- pfSense + Suricata -->
+  <rect x="210" y="192" width="300" height="86" rx="8" class="fw"/>
+  <text x="360" y="214" text-anchor="middle" class="h">pfSense 2.7.2 firewall</text>
+  <text x="360" y="231" text-anchor="middle" class="ip">WAN 10.0.2.15  |  LAN 10.10.10.1</text>
+  <text x="360" y="247" text-anchor="middle" class="lbl">Stateful filter + explicit LAN allows + default-deny egress</text>
+  <rect x="256" y="255" width="208" height="18" rx="4" class="badge-ids"/>
+  <text x="360" y="268" text-anchor="middle" class="badge-text">+ Suricata 7.0.8 IDS (em1)  |  ET Open + Snort</text>
 
-  <line x1="360" y1="258" x2="360" y2="292" class="arrow" marker-end="url(#arr)"/>
+  <line x1="360" y1="278" x2="360" y2="312" class="arrow" marker-end="url(#arr)"/>
 
   <!-- em1 (LAN) label pill -->
-  <rect x="379" y="270" width="72" height="18" rx="9" class="iface-bg"/>
-  <text x="415" y="283" text-anchor="middle" class="iface">em1 (LAN)</text>
+  <rect x="379" y="290" width="72" height="18" rx="9" class="iface-bg"/>
+  <text x="415" y="303" text-anchor="middle" class="iface">em1 (LAN)</text>
 
   <!-- LAN container -->
-  <rect x="40" y="292" width="640" height="272" rx="14" class="net"/>
-  <text x="60" y="318" class="net-label">vboxnet1  |  10.10.10.0/24  |  isolated host-only LAN</text>
-  <text x="60" y="336" class="net-sub">Detection scope: agent 001 (endpoint) + agent 002 (SIEM self-monitoring)</text>
+  <rect x="40" y="312" width="640" height="272" rx="14" class="net"/>
+  <text x="60" y="338" class="net-label">vboxnet1  |  10.10.10.0/24  |  isolated host-only LAN</text>
+  <text x="60" y="356" class="net-sub">Detection scope: agent 001 (endpoint) + agent 002 (SIEM self) + Suricata (north-south)</text>
 
   <!-- siem VM -->
-  <rect x="70" y="358" width="260" height="140" rx="8" class="siem"/>
-  <text x="200" y="382" text-anchor="middle" class="h">siem</text>
-  <text x="200" y="400" text-anchor="middle" class="ip">10.10.10.10</text>
-  <text x="200" y="420" text-anchor="middle" class="lbl">Ubuntu 22.04  |  7 GB RAM</text>
-  <text x="200" y="437" text-anchor="middle" class="lbl">Wazuh Manager + Indexer</text>
-  <text x="200" y="454" text-anchor="middle" class="lbl">+ Dashboard (Docker)</text>
+  <rect x="70" y="378" width="260" height="140" rx="8" class="siem"/>
+  <text x="200" y="402" text-anchor="middle" class="h">siem</text>
+  <text x="200" y="420" text-anchor="middle" class="ip">10.10.10.10</text>
+  <text x="200" y="440" text-anchor="middle" class="lbl">Ubuntu 22.04  |  7 GB RAM</text>
+  <text x="200" y="457" text-anchor="middle" class="lbl">Wazuh Manager + Indexer</text>
+  <text x="200" y="474" text-anchor="middle" class="lbl">+ Dashboard (Docker)</text>
 
-  <rect x="86" y="465" width="230" height="24" rx="4" class="badge-siem"/>
-  <text x="200" y="481" text-anchor="middle" class="badge-text">+ Wazuh Agent 002 (siem-self) + auditd</text>
+  <rect x="86" y="485" width="230" height="24" rx="4" class="badge-siem"/>
+  <text x="200" y="501" text-anchor="middle" class="badge-text">+ Agent 002 (siem-self) + auditd + dns-analyzer</text>
 
   <!-- win-ep VM -->
-  <rect x="390" y="358" width="260" height="140" rx="8" class="ep"/>
-  <text x="520" y="382" text-anchor="middle" class="h">win-ep</text>
-  <text x="520" y="400" text-anchor="middle" class="ip">10.10.10.20</text>
-  <text x="520" y="420" text-anchor="middle" class="lbl">Windows 10  |  2 GB RAM</text>
-  <text x="520" y="437" text-anchor="middle" class="lbl">Sysmon + PS 4104 + Defender</text>
-  <text x="520" y="454" text-anchor="middle" class="lbl">3 ASR rules (block mode)</text>
+  <rect x="390" y="378" width="260" height="140" rx="8" class="ep"/>
+  <text x="520" y="400" text-anchor="middle" class="h">win-ep</text>
+  <text x="520" y="417" text-anchor="middle" class="ip">10.10.10.20</text>
+  <text x="520" y="435" text-anchor="middle" class="lbl">Windows 10  |  2 GB RAM</text>
+  <text x="520" y="451" text-anchor="middle" class="lbl">Sysmon + PS 4104 + Defender + ASR</text>
 
-  <rect x="406" y="465" width="230" height="24" rx="4" class="badge-ep"/>
-  <text x="520" y="481" text-anchor="middle" class="badge-text">+ Wazuh Agent 001 (win-ep)</text>
+  <rect x="406" y="460" width="230" height="22" rx="4" class="badge-ep"/>
+  <text x="520" y="475" text-anchor="middle" class="badge-text">+ Wazuh Agent 001 (win-ep)</text>
+  <rect x="406" y="486" width="230" height="26" rx="4" class="badge-ep"/>
+  <text x="520" y="497" text-anchor="middle" class="badge-text">Cred-access: LSASS / Mimikatz / stealer</text>
+  <text x="520" y="508" text-anchor="middle" style="font-size:9px;font-weight:700;fill:#FCA5A5;font-family:'Courier New',monospace;">T1003.001  (rules 100311-313)</text>
 
-  <!-- Wazuh comms label between VMs (raised above badge line) -->
-  <rect x="333" y="395" width="54" height="34" rx="4" class="comms-bg"/>
-  <text x="360" y="408" text-anchor="middle" class="comms-title">Wazuh</text>
-  <text x="360" y="422" text-anchor="middle" class="comms-ports">1514/15</text>
-  <text x="360" y="432" text-anchor="middle" class="comms-ports">55000</text>
+  <!-- Wazuh comms label between VMs -->
+  <rect x="333" y="415" width="54" height="34" rx="4" class="comms-bg"/>
+  <text x="360" y="428" text-anchor="middle" class="comms-title">Wazuh</text>
+  <text x="360" y="442" text-anchor="middle" class="comms-ports">1514/15</text>
+  <text x="360" y="452" text-anchor="middle" class="comms-ports">55000</text>
 
-  <!-- Arrow between the two VMs, drawn below the label box -->
-  <line x1="390" y1="440" x2="330" y2="440" class="arrow" marker-end="url(#arr)"/>
+  <!-- Arrow between the two VMs -->
+  <line x1="390" y1="460" x2="330" y2="460" class="arrow" marker-end="url(#arr)"/>
 
   <!-- ThinkPad analyst -->
-  <rect x="240" y="512" width="240" height="44" rx="6" class="box"/>
-  <text x="360" y="532" text-anchor="middle" class="h">ThinkPad analyst workstation</text>
-  <text x="360" y="548" text-anchor="middle" class="ip">10.10.10.2  |  Dashboard via 443</text>
+  <rect x="240" y="532" width="240" height="44" rx="6" class="box"/>
+  <text x="360" y="552" text-anchor="middle" class="h">ThinkPad analyst workstation</text>
+  <text x="360" y="568" text-anchor="middle" class="ip">10.10.10.2  |  Dashboard via 443</text>
 
-  <text x="360" y="592" text-anchor="middle" class="lbl">Custom rules: 100100-100102 (PowerShell obfuscation)  |  100200-100205 (SIEM tampering, T1562)</text>
-  <text x="360" y="608" text-anchor="middle" class="lbl">Snapshots: pfsense@phase4-final, siem@phase4.5-self-monitoring-complete, win-ep@phase4-migrated-to-lan</text>
+  <!-- ============ DETECTION PIPELINES SECTION ============ -->
+  <line x1="40" y1="606" x2="680" y2="606" stroke="#E5E7EB" stroke-width="1.5"/>
+  <text x="360" y="628" text-anchor="middle" class="sec-title">Phase 5 — Suricata &#8594; Wazuh Detection Pipelines</text>
+
+  <!-- Pipeline 1: Alerts -->
+  <text x="52" y="654" class="pipe-tag">Pipeline 1 — IDS alerts (PULL, systemd)</text>
+  <!-- src -->
+  <rect x="52" y="662" width="118" height="40" rx="6" class="pipe-src"/>
+  <text x="111" y="679" text-anchor="middle" class="pipe-step">Suricata eve.json</text>
+  <text x="111" y="694" text-anchor="middle" class="pipe-sub">event_type=alert</text>
+  <line x1="170" y1="682" x2="192" y2="682" class="flow" marker-end="url(#arrflow)"/>
+  <!-- mid -->
+  <rect x="192" y="662" width="130" height="40" rx="6" class="pipe-mid"/>
+  <text x="257" y="679" text-anchor="middle" class="pipe-step">suricata-collector</text>
+  <text x="257" y="694" text-anchor="middle" class="pipe-sub">ssh tail, Restart=always</text>
+  <line x1="322" y1="682" x2="344" y2="682" class="flow" marker-end="url(#arrflow)"/>
+  <!-- siem -->
+  <rect x="344" y="662" width="150" height="40" rx="6" class="pipe-siem"/>
+  <text x="419" y="679" text-anchor="middle" class="pipe-step">Wazuh localfile (json)</text>
+  <text x="419" y="694" text-anchor="middle" class="pipe-sub">rules 100300-100305</text>
+  <line x1="494" y1="682" x2="516" y2="682" class="flow" marker-end="url(#arrflow)"/>
+  <!-- out -->
+  <rect x="516" y="662" width="152" height="40" rx="6" class="pipe-out"/>
+  <text x="592" y="678" text-anchor="middle" class="pipe-step">MITRE ATT&amp;CK</text>
+  <text x="592" y="695" text-anchor="middle" class="mitre">T1046  T1048</text>
+
+  <!-- Pipeline 2: DNS C2 -->
+  <text x="52" y="730" class="pipe-tag">Pipeline 2 — DNS C2 beaconing (batch pull, behavioral)</text>
+  <!-- src -->
+  <rect x="52" y="738" width="118" height="40" rx="6" class="pipe-src"/>
+  <text x="111" y="755" text-anchor="middle" class="pipe-step">Suricata eve.json</text>
+  <text x="111" y="770" text-anchor="middle" class="pipe-sub">event_type=dns query</text>
+  <line x1="170" y1="758" x2="192" y2="758" class="flow" marker-end="url(#arrflow)"/>
+  <!-- mid -->
+  <rect x="192" y="738" width="130" height="40" rx="6" class="pipe-mid"/>
+  <text x="257" y="755" text-anchor="middle" class="pipe-step">dns-pull &#8594; c2-detect</text>
+  <text x="257" y="770" text-anchor="middle" class="pipe-sub">cron 1m, rate/eTLD+1</text>
+  <line x1="322" y1="758" x2="344" y2="758" class="flow" marker-end="url(#arrflow)"/>
+  <!-- siem -->
+  <rect x="344" y="738" width="150" height="40" rx="6" class="pipe-siem"/>
+  <text x="419" y="755" text-anchor="middle" class="pipe-step">Wazuh localfile (json)</text>
+  <text x="419" y="770" text-anchor="middle" class="pipe-sub">rules 100306-100307</text>
+  <line x1="494" y1="758" x2="516" y2="758" class="flow" marker-end="url(#arrflow)"/>
+  <!-- out -->
+  <rect x="516" y="738" width="152" height="40" rx="6" class="pipe-out"/>
+  <text x="592" y="754" text-anchor="middle" class="pipe-step">MITRE ATT&amp;CK</text>
+  <text x="592" y="771" text-anchor="middle" class="mitre">T1071.004</text>
+
+  <!-- Rule inventory footer -->
+  <line x1="40" y1="800" x2="680" y2="800" stroke="#E5E7EB" stroke-width="1.5"/>
+  <text x="360" y="822" text-anchor="middle" class="lbl">Custom rules: 100100-102 (PowerShell)  |  100200-205 (SIEM tampering)  |  100300-307 (Suricata + DNS)  |  100310-313 (credential access)</text>
+  <text x="360" y="840" text-anchor="middle" class="lbl">Detection layered by design: Suricata = north-south wire  |  Wazuh + Sysmon = host &amp; east-west  |  behavioral C2 = SIEM layer</text>
 </svg>
