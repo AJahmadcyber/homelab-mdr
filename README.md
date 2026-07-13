@@ -1,90 +1,123 @@
-# Open MDR Home Lab
+# Homelab MDR — SOC Detection Engineering Lab
 
-> An open-source Managed Detection & Response stack built as a personal home lab — Wazuh SIEM, n8n SOAR, pfSense + Suricata integration, behavioural detection mapped to MITRE ATT&CK, and automated bilingual alerting.
+> An open-source detection-and-response home lab: endpoint and network telemetry feeding a Wazuh SIEM, Suricata IDS on pfSense, and custom detection rules mapped to MITRE ATT&CK — built and debugged end to end.
 
-![Architecture](docs/architecture.png)
-
----
-
-## About this project
-
-A self-built SOC home lab demonstrating end-to-end detection engineering using open-source tools: log collection, behavioural analysis, MITRE ATT&CK mapping, case management, automated enrichment, and SOAR-driven response. Built as part of professional development in cybersecurity operations.
-
-Everything runs locally on a single hypervisor host. All attack simulations target only lab VMs you control.
+**Repo:** https://github.com/AJahmadcyber/homelab-mdr
 
 ---
 
-## Stack
+## Overview
 
-| Layer | Tool | Role |
+A hands-on lab demonstrating detection engineering with open-source tools: collecting Windows and Linux telemetry into a SIEM, running a network IDS at the firewall, writing custom detection rules, mapping every detection to MITRE ATT&CK, and hardening the monitoring stack itself. Everything is version-controlled, with each build phase documented alongside its design rationale.
+
+The lab is built in phases, infrastructure and visibility first, then detection content, then response automation. Phases 1–5 are implemented and working; Phases 6–7 are the planned roadmap.
+
+---
+
+## Status
+
+| Phase | Scope | State |
 | --- | --- | --- |
-| SIEM | Wazuh 4.9 (Manager + Indexer + Dashboard) | Log aggregation, correlation, FIM, vulnerability scanning |
-| Search / index | OpenSearch (Wazuh Indexer) | Indexed alert and event storage |
-| Windows telemetry | Sysmon (sysmon-modular) + Wazuh agent + ASR rules | Process, network, file, registry, DNS, LSASS access |
-| Case management | TheHive 5 + Cassandra | Alert to Case lifecycle |
-| Threat enrichment | Cortex + analyzers (VirusTotal, AbuseIPDB) + custom analyzer | IOC enrichment |
-| SOAR | n8n | Alert routing, auto-response orchestration |
-| Network IDS / firewall | pfSense + Suricata | L3/L4 detection, automated blocking via API |
-| Detection rules | Wazuh + Sigma + YARA | Custom + community |
+| 1 — Foundation | VMs, network, Docker, Wazuh stack (Manager + Indexer + Dashboard) | ✅ Implemented |
+| 2 — Hardening | UFW, fail2ban, SSH hardening, index retention | ✅ Implemented |
+| 3 — Windows telemetry | Sysmon (sysmon-modular), PowerShell Script Block Logging (4104), ASR, Defender → Wazuh agent | ✅ Implemented |
+| 4 — Network re-architecture | pfSense in-path gateway, LAN segmentation | ✅ Implemented |
+| 4.5 — SIEM self-monitoring | Agent on the SIEM + auditd, tamper detection for the monitoring stack | ✅ Implemented |
+| 5 — Network IDS | Suricata on pfSense + Suricata→Wazuh pipeline, MITRE-mapped alerts | ✅ Implemented |
+| 6 — SOAR | TheHive 5 + Cassandra + Cortex + n8n, automated response with safety controls | ⏳ Roadmap |
+| 7 — Threat simulation | Ransomware profile (T1486) run end to end against the stack | ⏳ Roadmap |
 
 ---
 
-## Build status
+## Architecture
 
-| Phase | Component | Status |
+pfSense sits in-path as the gateway, so all routed traffic passes through it — the natural place for a network IDS. Endpoints report host telemetry to the SIEM; Suricata reports network detections. Detection is layered on purpose: no single sensor sees everything.
+
+| VM | OS | RAM | Role | IP |
+| --- | --- | --- | --- | --- |
+| `siem` | Ubuntu Server 22.04 | 7 GB | Wazuh Manager + Indexer + Dashboard (Docker Compose) | 10.10.10.10 |
+| `win-ep` | Windows 10 | 2 GB | Endpoint: Sysmon + ASR + Wazuh agent | 10.10.10.20 |
+| `pfSense` | pfSense 2.7.2 | 2 GB | In-path gateway + Suricata IDS | 10.10.10.1 |
+| Host | Windows + VirtualBox | 16 GB | Hypervisor | 10.10.10.2 |
+
+Network: LAN `10.10.10.0/24`, pfSense in-path (WAN via NAT).
+
+---
+
+## Detection engineering
+
+Every custom rule is mapped to a MITRE ATT&CK technique, with IDs namespaced by phase.
+
+**Custom detections (rules I wrote):**
+
+| Technique | Detection | Layer |
 | --- | --- | --- |
-| 1 | siem VM + Ubuntu 22.04 base | ✅ Done |
-| 1 | Docker + Wazuh stack (Manager + Indexer + Dashboard) | ✅ Done |
-| 2 | Host hardening (UFW, fail2ban, SSH, DOCKER-USER iptables) | ✅ Done |
-| 2 | ISM retention (90d hot → delete) + replica tuning | ✅ Done |
-| 3 | Windows endpoint VM + Wazuh agent enrollment | ✅ Done |
-| 3 | Sysmon + sysmon-modular config | ✅ Done |
-| 3 | PowerShell Script Block Logging (4104) | ✅ Done |
-| 3 | ASR rules (LSASS, Office, web/email) | ✅ Done |
-| 3 | Defender Operational log ingestion | ✅ Done |
-| 4 | pfSense firewall + network re-architecture (host-only LAN + WAN NAT) | ✅ Done |
-| 4 | siem + win-ep migrated behind pfSense LAN (10.10.10.0/24) | ✅ Done |
-| 4 | Explicit firewall rules for Wazuh comms (agent + dashboard) | ✅ Done |
-| 4.5 | Wazuh agent on siem itself (self-monitoring, agent 002) | ✅ Done |
-| 4.5 | auditd + custom rules for T1562/T1611/T1610/T1548 detection | ✅ Done |
-| 5 | Suricata IDS on pfSense + Wazuh integration | ⏳ Planned |
-| 6 | TheHive 5 + Cassandra + Cortex + n8n | ⏳ Planned |
-| 7 | GentleKiller ransomware full-stack test case (T1486) | ⏳ Planned |
-Current state: **pfSense in-path + SIEM self-monitoring**. siem (10.10.10.10) + win-ep (10.10.10.20) on isolated LAN behind firewall. Two Wazuh agents Active (win-ep 001, siem-self 002), custom detection rules covering PowerShell obfuscation (100100-100102) and SIEM tampering (100200-100205).
+| T1046 — Network Service Discovery | Custom Suricata SYN-scan signatures → Wazuh rules 100300–100303 | Network |
+| T1059.001 — PowerShell | Script Block Logging (Event 4104) → Wazuh rules 100100–100102 | Endpoint |
+| T1562.001 / T1611 / T1610 / T1548.003 / T1098 / T1543.002 / T1562.004 | SIEM self-monitoring (auditd) → Wazuh rules 100200–100205 | SIEM host |
+
+**Extended by Wazuh's community ruleset** (enabled, not authored here): broad Sysmon/Windows coverage — process creation, image loads, file drops, LSASS access, WinRM/Invoke-Command lateral movement, scheduled tasks, and more.
+
+### The Suricata → Wazuh pipeline (Phase 5)
+
+```
+Suricata eve.json (pfSense)
+  → edge filter: event_type=alert only (protocol logs dropped at the sensor)
+  → SSH stream, siem PULLs via a systemd service (Restart=always)
+  → /var/log/suricata-pfsense/eve-alerts.json  (Docker bind-mount into Wazuh)
+  → Wazuh JSON decoder → custom rules 100300–100303 → MITRE T1046
+```
+
+The collector runs as a systemd service on the SIEM (`Restart=always`), so it self-recovers from dropped connections, host suspend, or crashes — no manual watchdog.
 
 ---
 
-## Detection coverage
+## Key design decisions
 
-Every rule maps to a MITRE ATT&CK technique.
+- **Detection before response.** Phase 5 is IDS-only by design; automated blocking is reserved for the SOAR phase with safety controls (block TTL, RFC1918 allowlist, circuit breaker).
+- **IDS, not inline IPS (for now).** Inline blocking is a single point of failure; start in detection, baseline, then promote high-confidence signatures. Blocking will run through the SOAR path — auditable and reversible.
+- **North-south vs east-west.** Suricata sees routed traffic only; same-subnet lateral movement is covered host-side by Wazuh + Sysmon. Layered visibility, not one sensor.
+- **Edge filtering.** Only actionable alerts are shipped to the SIEM; raw protocol logs stay at the sensor. Keeps the SIEM focused and storage bounded.
+- **Monitor the monitor.** The SIEM is a high-value target, so tampering with the monitoring stack itself is detected (Phase 4.5).
+- **Resilient collection.** systemd service supervision instead of a manual loop, so the pipeline survives suspend/disconnect.
 
-| Threat | Detection method | MITRE technique |
-| --- | --- | --- |
-| Ransomware | FIM mass-encryption + entropy spike + known extensions + Sysmon ID 23 | T1486 |
-| Brute force (RDP / SSH) | Auth-failure correlation (4625 / sshd) | T1110 |
-| Credential dumping (LSASS) | Sysmon ID 10 + ASR rule | T1003.001 |
-| Obfuscated PowerShell | Script Block Logging (Event 4104) | T1059.001 |
-| Living-off-the-land | certutil / wmic / mshta abuse | T1218 |
-| Persistence | Scheduled tasks (4698), run keys, cron | T1053 / T1547 |
-| Lateral movement | Internal SMB / PsExec patterns | T1021 |
-| Privilege escalation | sudo misuse, token abuse | T1068 |
-| Data exfiltration | Large outbound transfers | T1041 |
-| Vulnerability exposure | Wazuh vulnerability detector (NVD feed) | - |
+Full rationale in [`docs/`](docs/).
 
 ---
 
-## Lab environment
+## Repository layout
 
-| VM | OS | RAM | vCPU | Disk | Role |
-| --- | --- | --- | --- | --- | --- |
-| siem | Ubuntu Server 22.04 | 7 GB | 4 | 120 GB | Wazuh Manager + Indexer + Dashboard, self-monitoring agent (TheHive + Cortex + n8n planned Phase 6) |
-| win-ep | Windows 10 | 2 GB | 2 | 60 GB | Endpoint with Sysmon + ASR |
-| pfSense | FreeBSD 14 (pfSense 2.7.2) | 1 GB | 1 | 8 GB | Perimeter firewall + gateway |
+```
+homelab-mdr/
+├── README.md
+├── homelab-mdr-session-log.md          # phase-by-phase build journal
+├── detection/
+│   ├── wazuh-rules/                     # custom Wazuh XML rules (100100–100303)
+│   │   ├── 9997-suricata-mitre.xml
+│   │   ├── 9998-siem-self-monitoring.xml
+│   │   └── 9999-windows-powershell.xml
+│   ├── suricata-rules/                  # custom Suricata signatures
+│   │   ├── custom.rules                 # SID 1000001/1000002 (T1046)
+│   │   └── disablesid.conf
+│   └── pipeline/                        # Suricata → Wazuh collector
+│       ├── suricata-collector.sh        # PULL collector (runs on siem)
+│       └── suricata-collector.service   # systemd unit (Restart=always)
+└── docs/
+    ├── phase5-session2-pipeline.md
+    ├── phase5-stream-stability-pull-model.md
+    └── evidence/                        # screenshots per phase
+```
 
-Host: 16 GB RAM, VirtualBox 7.x, Windows 11.
+---
+
+## Roadmap
+
+- **Phase 6 — SOAR:** TheHive 5 (case management) + Cortex (observable enrichment) + n8n (orchestration). Alert → auto-create case → enrich → score → automated containment via the pfSense API, gated by block TTL, an RFC1918 allowlist, and a circuit breaker.
+- **Phase 7 — Threat simulation:** a ransomware profile (T1486 and the surrounding chain) run against the full stack to validate detections end to end.
+- **Near-term:** protocol-log threat hunting (DNS tunneling, JA3-based C2), index retention policy, and promoting high-confidence signatures to inline IPS.
 
 ---
 
 ## License
 
-MIT
+MIT — see [`LICENSE`](LICENSE).
