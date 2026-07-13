@@ -1,724 +1,281 @@
-# Homelab MDR — Session Log (Day 1-2)
+# Homelab MDR — Session Log
 
-> Build journal: من الفكرة لـ Wazuh stack شغّال + أول endpoint متصل.
+> Build journal: SOC Detection Engineering Lab. From idea to full detection stack.
+> **GitHub:** https://github.com/AJahmadcyber/homelab-mdr
 
-**Date range:** June 18-21, 2026
-**Status:** Phase 1 + 2 done. Snapshots taken: `wazuh-stack-deployed`, `post-hardening`, `agent-connected`
-**GitHub:** `https://github.com/AJahmadcyber/homelab-mdr`
+**Last updated:** July 13, 2026 — Phase 5 complete (Suricata IDS + Suricata→Wazuh pipeline + DNS-layer detection: tunneling T1048 + rate-based C2 beaconing T1071.004).
 
 ---
 
-## TL;DR — وين وصلنا
+## Phase Order (Locked — do not reorder or skip)
 
-| Component | Status | Details |
+| Phase | Description | Status |
 |---|---|---|
-| Host hardware | ✅ | 16 GB RAM، 263 GB free SSD، VirtualBox 7.x، Windows 11 |
-| siem VM (Ubuntu 22.04) | ✅ | 9 GB RAM، 120 GB، 192.168.56.10 |
-| win-ep VM (Windows 10) | ✅ | 2 GB RAM، 60 GB، 192.168.56.20 |
-| Network topology | ✅ | Host-only `vboxnet0` (192.168.56.0/24) + NAT للإنترنت |
-| Docker + Compose | ✅ | 29.5.3 + Compose v2.5.1.4 |
-| Wazuh stack | ✅ | Manager + Indexer + Dashboard (v4.9.0) shealthy |
-| Hardening | ✅ | UFW, fail2ban, SSH hardening, ISM 90d retention |
-| GitHub repo | ✅ | README + architecture.svg + LICENSE + .gitignore |
-| Wazuh agent (win-ep) | ✅ | Registered ID 001، Status: Active |
+| 1 | Foundation (VMs, network, Docker, Wazuh stack) | ✅ Done |
+| 2 | Hardening (UFW, fail2ban, SSH, ISM retention) | ✅ Done |
+| 3 | Windows Endpoint Telemetry (Sysmon, 4104, ASR, Defender) | ✅ Done |
+| 4 | pfSense in-path network re-architecture | ✅ Done |
+| 4.5 | SIEM Self-Monitoring (agent 002 + auditd + rules 100200–100205) | ✅ Done |
+| 5 | Suricata IDS on pfSense + Wazuh integration + DNS-layer detection | ✅ **Done** |
+| 6 | TheHive 5 + Cassandra + Cortex + n8n SOAR | ⏳ **Next** |
+| 7 | GentleKiller ransomware threat profile (T1486+) | ⏳ Planned last |
 
 ---
 
-## القرارات الجوهرية (Locked Decisions)
+## Current Topology (post Phase 5) — GROUND TRUTH
 
-| # | Decision | Rationale |
-|---|---|---|
-| 1 | **Branding** = "SOC Detection Engineering Lab" مش "MDR" | يفصل الـ portfolio عن الـ MDR Model A التجاري للشركة |
-| 2 | **Public GitHub repo** | للـ scholarship applications + recruiters |
-| 3 | **Stack chosen** = Wazuh + TheHive 5 + Cassandra + Cortex + n8n + pfSense + Suricata | Industry-standard MSSP equivalent، replicates $50K commercial stack |
-| 4 | **No Telegram alerts** | personal lab، Dashboard + TheHive كافي |
-| 5 | **No attacker VM** | الهجمات من الـ Windows host (WSL2 + nmap/hydra/etc) |
-| 6 | **Kali** = Powered Off دائما | محفوظ للسيناريوهات اللي تحتاج adversary tools (Empire, BloodHound) |
-| 7 | **Network** = Host-only adapter واحد للكل (192.168.56.0/24) | Internal Network كان buggy بإصدار VirtualBox عندي |
-| 8 | **ISM retention** = 90 days hot → delete | يمنع امتلاء الـ disk من الـ 108GB/day self-monitoring writes |
-| 9 | **DOCKER-USER iptables rule** | يبلوك inbound من NAT interface (enp0s8) — يمنع Docker bypass للـ UFW |
-| 10 | **Wazuh agent enrollment** = IP literal بـ UTF-8 no-BOM | bug في 4.9.0 على Windows مع hostname resolution |
+**pfSense 2.7.2 in-path:** WAN em0 via VirtualBox NAT `10.0.2.15`; LAN em1 `10.10.10.1/24`; hostname `pfSense.lab.local`. Suricata 7.0.8.
 
----
+**VMs (all on LAN 10.10.10.0/24):**
 
-## Architecture (الحالي)
+| VM | IP | RAM | Role |
+|---|---|---|---|
+| siem (Ubuntu 22.04) | 10.10.10.10 | 7 GB | Wazuh 4.9.0 Manager + Indexer + Dashboard (Docker Compose) |
+| win-ep (Windows 10) | 10.10.10.20 | 2 GB | Windows endpoint (Sysmon + ASR + Wazuh agent 001) |
+| pfSense | 10.10.10.1 | 2 GB | Gateway + Suricata 7.0.8 IDS |
+| ThinkPad (host) | 10.10.10.2 | 16 GB total | VirtualBox host |
 
-```
-                          ThinkPad (Host - 16 GB)
-                                  |
-                  vboxnet0 (Host-only) 192.168.56.0/24
-                          |                |
-              ┌───────────┴────┐    ┌──────┴──────┐
-              | siem VM         |    | win-ep VM   |
-              | 192.168.56.10   |    | 192.168.56.20|
-              |                 |    |             |
-              | Wazuh Manager   |←───┤ Wazuh Agent |
-              | + Indexer       |1514| (ID 001)    |
-              | + Dashboard     |    |             |
-              | Docker Compose  |    | Sysmon (TBD)|
-              |                 |    | ASR  (TBD)  |
-              | UFW + fail2ban  |    | 4104 (TBD)  |
-              | enp0s3 + enp0s8 |    | NAT NIC2    |
-              └─────────────────┘    └─────────────┘
-                       |                    |
-                     enp0s8                  Ethernet 2
-                       └────────NAT─────────┘
-                         (internet only)
-```
+> **VirtualBox VM names (exact):** `"siem  "` (note trailing spaces — use UUID `8d29472a-f476-4087-833c-bb6411d195df`), `"win-ep"`, `"pfsense"`.
+> **VBoxManage path:** `C:\Program Files\Oracle\VirtualBox\VBoxManage.exe` (not in PATH — call with full path via `&`).
+
+> **Obsolete:** old `192.168.56.0/24` Host-only topology + siem 9 GB — replaced in Phase 4. All current work is on `10.10.10.0/24`.
+
+**Memory ceiling:** 16 GB total, fully allocated. Any new VM requires explicit rebalancing (relevant for Phase 6 TheHive/Cortex/Cassandra).
 
 ---
 
-## Stack الكامل (المخطط)
+## East-West vs North-South — CONFIRMED empirically (this session)
 
-```
-Layer              Tool                         Status
-─────────────────────────────────────────────────────────
-SIEM               Wazuh Manager 4.9.0          ✅ Running
-Search             Wazuh Indexer (OpenSearch)   ✅ Running, 4GB heap
-UI                 Wazuh Dashboard              ✅ Running, port 443
-Win telemetry      Sysmon + sysmon-modular      ⏳ Phase 3
-Win telemetry      PowerShell 4104 + ASR        ⏳ Phase 3
-Win telemetry      Defender Operational log     ⏳ Phase 3
-Case mgmt          TheHive 5 + Cassandra        ⏳ Phase 4
-Enrichment         Cortex + analyzers           ⏳ Phase 4
-SOAR               n8n                          ⏳ Phase 4
-Network IDS        pfSense + Suricata           ⏳ Phase 5
-Detection rules    Wazuh + Sigma + YARA         ⏳ Phase 5
-```
+Tested win-ep → ThinkPad (10.10.10.2) reachability:
+- `Get-NetNeighbor 10.10.10.2` → `NextHop: 0.0.0.0`, MAC resolved (`0A-00-27-00-00-0A`), State `Reachable`.
+- **Conclusion:** win-ep treats ThinkPad as on-link (same segment) → ARP direct → **L2-switched, never crosses pfSense.** Suricata is blind to it.
+- ICMP ping fails (Windows host firewall drops ICMP) — the ARP entry, not ping, is the truth.
+
+**Implication for C2:** any device inside 10.10.10.0/24 = east-west. A realistic *external* C2 listener would need to sit outside the /24 (WAN side). Deferred to Phase 7 (ransomware chain). **DNS is the one C2 channel that IS routed** — win-ep DNS resolver = `10.10.10.1` (pfSense) primary, `1.1.1.1` fallback, so every query crosses pfSense and is Suricata-visible. This is why DNS-layer detection is the right realistic C2 story for this topology.
 
 ---
 
-## شغّال هلأ على siem (services)
+## Active Components
 
-```
-- docker-ce 29.5.3 (auto-start enabled)
-- single-node-wazuh.manager-1     (port 1514, 1515, 514/udp, 55000)
-- single-node-wazuh.indexer-1     (port 9200)
-- single-node-wazuh.dashboard-1   (port 443)
-- ssh.service                     (port 22, hardened)
-- fail2ban.service                (sshd jail, 1h ban, 5 retries)
-- ufw                             (active، rules بـ enp0s3)
-- iptables-persistent             (DOCKER-USER chain rule for enp0s8)
-- netplan/networkd                (cloud-init disabled)
-```
+**Wazuh agents:** 001 (win-ep), 002 (siem-self)
 
----
+**auditd on siem:** 20+ rules (Docker socket, Wazuh config/binary tampering, SSH, sudoers, /etc/shadow, crontab, systemd, UFW/iptables, execve).
 
-## Credentials
+**Custom Wazuh rules:**
+- 100100–100102 (Phase 3, PowerShell/4104) → T1059.001
+- 100200–100205 in `9998-siem-self-monitoring.xml` → T1562.001, T1611, T1610, T1548.003, T1098, T1543.002, T1562.004
+- 100300–100304 in `9997-suricata-mitre.xml` → Suricata alerts → MITRE (T1046, severity escalation; 100304 preserves T1046 on high-sev ET SCAN)
+- **100305** → DNS tunneling / exfil (T1048), chains `if_sid 100300` on Suricata sid 1000003
+- **100306** (level 10) / **100307** (level 12) → DNS C2 beaconing (T1071.004), sourced from custom dns-analyzer (NOT Suricata) via `decoded_as json` + `field name="analyzer"`
+- 100310–100313 (credential access, Jul 12, commits `d63101d`+`b04c0fd`) in `9998-credential-access.xml` → T1003.001 (LSASS via comsvcs), Mimikatz 4104, browser stealer
 
-```
-siem Linux:
-  user:     ahmadj
-  password: Ahmad@2026
+**pfSense firewall:** aliases `siem_host`, `win_ep`, `thinkpad_host`, `wazuh_ports`, `github_egress`; explicit LAN allow rules with logging; default-deny egress.
 
-Wazuh Dashboard / Indexer:
-  URL:      https://192.168.56.10
-  user:     admin
-  password: SecretPassword
-
-Wazuh internal API:
-  user:     wazuh-wui
-  password: MyS3cr37P450r.*-
-
-win-ep Windows:
-  user:     vboxuser  (default)
-  password: changeme  (default)
-
-GitHub PAT:
-  ~/.github-token on siem
-  expires: 90 days from creation
-```
+**Suricata (Phase 5):**
+- LAN (em1) instance, IDS mode, AutoFP, Medium profile (~28,510 rules)
+- ET Open + Snort GPLv2 Community; JA3 enabled
+- `custom.rules`: 1000001 (internal SYN scan T1046), 1000002 (external→internal T1046), **1000003 (DNS long-subdomain tunneling T1048)**
+- SID Mgmt disablesid: `26470` (broken Snort Community Zeus rule)
+- EVE JSON FILE output at `/var/log/suricata/suricata_em14846/eve.json` (includes DNS query + answer records)
 
 ---
 
-## Phase 1 — Foundation (Day 1)
+## Pipelines (Phase 5)
 
-### 1. Host validation
-
-```powershell
-# على Windows host (ThinkPad)
-Get-Volume | ?{$_.DriveLetter} | Select DriveLetter, Size, SizeRemaining
-# C: 476 GB total, 263 GB free
+### Pipeline 1 — Suricata alerts → Wazuh (PULL model, systemd)
 ```
-
-Cleaned up using `cleanmgr` to free additional space before VM creation.
-
-### 2. siem VM creation (Ubuntu 22.04)
-
-**VirtualBox settings:**
-- Name: `siem` (note: created with trailing spaces by accident — use `"siem  "` in CLI)
-- RAM: 9216 MB, CPU: 4
-- Disk: 120 GB **pre-allocated** (critical for OpenSearch I/O)
-- Network NIC1: Host-only Adapter
-- Network NIC2: NAT
-- System: I/O APIC ✅, Nested Paging ✅, PAE/NX ✅
-- Skip Unattended Installation: ✅ (don't let VirtualBox auto-install — broke password setup)
-
-**Ubuntu installation:**
-- Type: Ubuntu Server (not minimized)
-- Storage: full disk, no LVM
-- User: `ahmadj` / `Ahmad@2026`
-- SSH: enabled (password auth)
-- No featured snaps
-
-### 3. Network configuration
-
-**Issue encountered:** cloud-init kept overwriting netplan after reboot.
-
-**Final netplan (`/etc/netplan/50-cloud-init.yaml`):**
-
-```yaml
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    enp0s3:
-      addresses: [192.168.56.10/24]
-      nameservers:
-        addresses: [1.1.1.1, 8.8.8.8]
-    enp0s8:
-      dhcp4: true
+Suricata eve.json (pfSense)
+  → edge filter: grep '"event_type":"alert"'   (alerts only)
+  → siem PULLs: suricata-collector.sh (systemd, Restart=always) — persistent SSH tail
+  → /var/log/suricata-pfsense/eve-alerts.json
+  → Docker bind mount into wazuh.manager (:ro)
+  → Wazuh localfile (json) → built-in JSON decoder → rules 100300–100305 → MITRE
 ```
+- Service: `/usr/local/bin/suricata-collector.sh` + `suricata-collector.service` (User=root, Restart=always, RestartSec=5).
+- **`pkill -x tail` inside the SSH command** — kills stale remote tails by exact name only (see Learnings). Verified: 1 real tail steady-state, auto-recovers in <12s after ssh kill, delivery resumes with no tail leak.
 
-**Disable cloud-init network rewrite:**
-
-```bash
-echo 'network: {config: disabled}' | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+### Pipeline 2 — DNS queries → behavioral C2 analyzer → Wazuh (NEW this session)
 ```
-
-### 4. System update + tools
-
-```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl wget git vim nano htop net-tools \
-    ca-certificates gnupg lsb-release software-properties-common \
-    apt-transport-https tcpdump arping
+Suricata eve.json (pfSense)
+  → dns-pull.sh (batch, byte-offset, cron every 1 min) — pulls only NEW bytes,
+    filters event_type=dns AND type=query (answers dropped at edge)
+  → siem: /var/log/dns-analyzer/dns-queries.stream
+  → c2-detect.py (rate-based beaconing analyzer)
+        tldextract-free eTLD+1 approximation (last-2 + multi-TLD list)
+        groups by (src_ip, eTLD+1) over 300s window
+        THRESH=40 queries → alert; allowlist for legit high-volume parents
+        emits SOAR-ready JSON: parent_domain + src_ip + count + mitre
+  → /var/log/dns-analyzer/alerts.json
+  → Docker bind mount into wazuh.manager (:ro)
+  → Wazuh localfile (json) → rules 100306/100307 → T1071.004
 ```
+- `dns-pull.sh`: **batch, NOT a persistent tail** — opens SSH, reads new bytes via `tail -c +offset`, closes. Zero tail leak, zero collision with Pipeline 1. Byte offset in `/var/log/dns-analyzer/.last_size`; rotation guard resets if remote file shrank.
+- `c2-detect.py`: runs on-demand (cron can invoke, or manual). In-memory state, volatile by design (restart = clean).
+- cron: `/etc/cron.d/dns-pull` — `* * * * * root /usr/local/bin/dns-pull.sh >> /var/log/dns-analyzer/pull.log 2>&1`
+- logrotate: `/etc/logrotate.d/dns-analyzer` — stream (daily, rotate 3) + alerts (daily, rotate 7), copytruncate.
+- Service user `dnsanalyzer` (uid 998, nologin) created for least-privilege; **but the pull runs as root** (needs `/root/.ssh` key), so `/var/log/dns-analyzer` is `root:dnsanalyzer 770`.
 
-### 5. Docker installation
-
-```bash
-# Docker official GPG + repo
-sudo mkdir -p /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-    sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-    https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | \
-    sudo tee /etc/apt/sources.list.d/docker.list
-
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io \
-    docker-buildx-plugin docker-compose-plugin
-
-sudo usermod -aG docker $USER
-sudo systemctl enable --now docker
-```
-
-Logout/login required after `usermod` for group membership.
-
-### 6. Wazuh stack deployment
-
-```bash
-sudo mkdir -p /opt/homelab-mdr/{wazuh,thehive,n8n,backups,docs}
-sudo chown -R $USER:$USER /opt/homelab-mdr
-
-# Required sysctl for OpenSearch
-echo 'vm.max_map_count=262144' | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
-
-# Clone official Wazuh Docker repo
-cd /opt/homelab-mdr/wazuh
-git clone https://github.com/wazuh/wazuh-docker.git -b v4.9.0 .
-
-# Generate TLS certificates
-cd single-node
-docker compose -f generate-indexer-certs.yml run --rm generator
-sudo chown -R $USER:$USER /opt/homelab-mdr/wazuh
-
-# Deploy
-docker compose up -d
-```
-
-**Result:** 3 healthy containers within ~3 minutes.
-
-**Note:** Tried to change `SecretPassword` to custom value but Wazuh has internal users in the Indexer that don't pick up env-var changes. Workaround: kept default password and changed via Dashboard UI later (planned).
+**Design rationale (portfolio):** Signature matching is the weakest tier of the Pyramid of Pain — an attacker rewrites the tool and evades. Rate-based beaconing targets an *intrinsic property of the C2 channel* (repetition) that is costly to hide without breaking the C2. Behavioral analysis lives in the SIEM layer (clean separation: Suricata = wire, analyzer = behavior, Wazuh = correlation). Blocking is deferred to Phase 6 SOAR (block TTL + RFC1918 allowlist + circuit breaker) — never inline IPS on the single gateway.
 
 ---
 
-## Phase 2 — Hardening (Day 2)
+## Snapshots (latest)
 
-### 1. ISM retention policy
+- `siem@phase5-dns-c2-detection-complete` (this session, final)
+- `siem@pre-dns-wazuh-wiring` (this session, before docker-compose recreate)
+- `siem@phase5-session2-complete`, `pfsense@phase5-suricata-session1`
+- `siem@phase4.5-self-monitoring-complete`, `win-ep@phase4-migrated-to-lan`
 
-```bash
-curl -k -u admin:SecretPassword -X PUT "https://localhost:9200/_plugins/_ism/policies/wazuh_retention" \
-  -H 'Content-Type: application/json' -d '{
-  "policy": {
-    "description": "Retain Wazuh alerts 90 days then delete",
-    "default_state": "hot",
-    "states": [
-      {"name": "hot", "actions": [], "transitions": [{"state_name": "delete", "conditions": {"min_index_age": "90d"}}]},
-      {"name": "delete", "actions": [{"delete": {}}], "transitions": []}
-    ],
-    "ism_template": [{"index_patterns": ["wazuh-alerts-*", "wazuh-archives-*"], "priority": 100}]
-  }
-}'
+## Commits (chronological, Phase 5)
 
-curl -k -u admin:SecretPassword -X POST "https://localhost:9200/_plugins/_ism/add/wazuh-alerts-*" \
-  -H 'Content-Type: application/json' -d '{"policy_id": "wazuh_retention"}'
-```
-
-**Why:** Manager was writing 108 GB/day of self-monitoring data with no retention. ISM caps it at 90 days.
-
-### 2. Disable replicas (single-node optimization)
-
-```bash
-curl -k -u admin:SecretPassword -X PUT "https://localhost:9200/_template/wazuh-no-replicas" \
-  -H 'Content-Type: application/json' -d '{
-  "index_patterns": ["wazuh-*"],
-  "settings": {"number_of_replicas": 0}
-}'
-
-curl -k -u admin:SecretPassword -X PUT "https://localhost:9200/wazuh-*/_settings" \
-  -H 'Content-Type: application/json' -d '{"index": {"number_of_replicas": 0}}'
-```
-
-### 3. UFW firewall
-
-```bash
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw allow in on enp0s3 to any port 22 proto tcp comment 'SSH'
-sudo ufw allow in on enp0s3 to any port 443 proto tcp comment 'Wazuh Dashboard'
-sudo ufw allow in on enp0s3 to any port 55000 proto tcp comment 'Wazuh API'
-sudo ufw allow in on enp0s3 to any port 1514 proto tcp comment 'Wazuh agent comms'
-sudo ufw allow in on enp0s3 to any port 1515 proto tcp comment 'Wazuh agent enrollment'
-sudo ufw --force enable
-```
-
-### 4. Docker iptables bypass closure
-
-Docker injects rules into iptables that **bypass UFW**. Plug it:
-
-```bash
-sudo iptables -I DOCKER-USER -i enp0s8 -j DROP
-sudo iptables -I DOCKER-USER -i enp0s8 -m state --state RELATED,ESTABLISHED -j ACCEPT
-sudo apt install -y iptables-persistent
-sudo netfilter-persistent save
-```
-
-**Effect:** External traffic from NAT interface (enp0s8) can't reach Docker containers. Only outbound (for image pulls + updates).
-
-### 5. fail2ban + SSH hardening
-
-```bash
-sudo apt install -y fail2ban
-sudo tee /etc/fail2ban/jail.local > /dev/null <<'EOF'
-[DEFAULT]
-bantime = 1h
-findtime = 10m
-maxretry = 5
-backend = systemd
-
-[sshd]
-enabled = true
-port = 22
-EOF
-sudo systemctl enable --now fail2ban
-
-sudo tee /etc/ssh/sshd_config.d/99-hardening.conf > /dev/null <<'EOF'
-PermitRootLogin no
-PasswordAuthentication yes
-PubkeyAuthentication yes
-MaxAuthTries 3
-ClientAliveInterval 300
-ClientAliveCountMax 2
-X11Forwarding no
-EOF
-sudo systemctl reload ssh
-```
+- `d2e3267` (Phase 4), `de9fb16` (Phase 4.5)
+- `7979e47` (Jul 3 — Phase 5 Session 1: Suricata IDS, custom T1046 SYN-scan rule)
+- `d48ad09` (Jul 4 — Phase 5 Session 2: Suricata→Wazuh stream + rules 100300–100303, T1046)
+- `e3d3971` (Jul 4 — Phase 5 S2 docs: pipeline config reference + session log)
+- `02ba5e7` (Jul 8 — replace PUSH stream with PULL + systemd Restart=always)
+- `d4761ef` (Jul 9 — rule 100304: preserve T1046 on high-sev ET SCAN)
+- `d63101d` (Jul 12 — T1003.001 LSASS credential dumping, rules 100310/100311)
+- `b04c0fd` (Jul 12 — Mimikatz 100312 + browser cred theft 100313; FP-tune 100310)
+- `56efcdb` (Jul 13 — fix: pkill -x tail in collector, prevent stale tail accumulation)
+- **`73e0ea1`** (Jul 13 — DNS-layer detection: 100305 T1048 + DNS C2 pipeline + rules 100306/100307 T1071.004)
 
 ---
 
-## Phase 2.5 — GitHub Repo
+## Phase 5 — Full Record
 
-```bash
-git config --global user.name "Ahmad Jehad"
-git config --global user.email "AJahmadcyber@users.noreply.github.com"
-git config --global init.defaultBranch main
-git config --global credential.helper store
+### Session 1 (DONE ✅)
+- Suricata package; hardware offloading disabled (checksum/TSO/LRO) + reboot
+- LAN instance, IDS mode, EVE JSON (file); ET Open + Snort Community categories
+- Custom T1046 SYN-scan rules (1000001/1000002) verified firing
+- 6 evidence screenshots + commit + snapshot
 
-mkdir -p ~/projects/homelab-mdr/docs
-cd ~/projects/homelab-mdr
-git init
-```
+### Session 2 (DONE ✅)
+- Edge-filtered streaming pipeline — verified end-to-end
+- Docker bind mount for eve-alerts.json; Wazuh localfile (json) + rules 100300–100303
+- Persistent auto-reconnect stream + logrotate + fail2ban whitelist
+- Commit `d48ad09` + snapshot `phase5-session2-complete`
 
-**Files added:**
-- `README.md` (rewritten to be portfolio-friendly, no MDR commercial framing)
-- `docs/architecture.svg` (light/dark mode supported)
-- `.gitignore` (excludes certs, credentials, runtime data)
-- `LICENSE` (MIT, from GitHub UI)
+### Session 3 (DONE ✅ — this session, July 13)
+**Collector hardening (PULL model finalized):**
+- Confirmed root cause of tail accumulation: old `pkill -f 'tail -F ...'` matched its OWN wrapper shell (`/bin/sh -c "pkill...; tail -F..."`) → corrupted cleanup → tail leak on every reconnect.
+- Fix: `pkill -x tail` (exact process name only; the Capsicum `system.fileargs` helper and wrapper shell are not matched). Verified real tails = 1 steady-state.
+- Resilience verified: killed collector's ssh → systemd `Restart=always` recovered in <12s → delivery resumed, still 1 tail (no leak).
+- Committed the fixed `suricata-collector.sh` to repo.
 
-```bash
-git remote add origin https://github.com/AJahmadcyber/homelab-mdr.git
-git pull origin main --allow-unrelated-histories
-git push -u origin main
-# Authenticate with PAT (classic, scope: repo)
-```
+**Phase 5 detection scenarios verified:**
+- Port scan T1046: `nmap -sS` win-ep → 10.10.10.1 (must target across pfSense, not east-west). Confirmed Suricata sid 1000001 → Wazuh rule 100301, level 7, T1046, live on dashboard.
+- DNS tunneling T1048: Suricata sid 1000003 firing; **Wazuh rule 100305 already present** (level 7, T1048) — mapped correctly.
 
-**Important branding decision:**
-- Original "About this project" section had defensive language about "not commercial product, not academic capstone" — replaced with positive framing focusing on detection engineering skills.
-
----
-
-## Phase 3 — Windows Endpoint (Day 2 — Started)
-
-### 1. win-ep VM creation
-
-**Important:** The original `Windows10-MITM-Lab` VM had its password lost. Deleted and recreated from scratch.
-
-**Settings:**
-- Name: `win-ep`
-- RAM: 2048 MB (initially 3072 caused HostMemoryLow)
-- CPU: 2
-- Disk: 60 GB
-- NIC 1: Host-only (192.168.56.0/24)
-- NIC 2: NAT
-- Guest Additions: installed
-
-**Local account password:** Choose "I don't have internet" during setup to force local account creation (avoid Microsoft account).
-
-### 2. Network configuration (Windows)
-
-```powershell
-$if = "Ethernet"
-Set-NetIPInterface -InterfaceAlias $if -Dhcp Disabled
-Get-NetIPAddress -InterfaceAlias $if -AddressFamily IPv4 -EA SilentlyContinue | Remove-NetIPAddress -Confirm:$false
-New-NetIPAddress -InterfaceAlias $if -IPAddress 192.168.56.20 -PrefixLength 24
-Set-DnsClientServerAddress -InterfaceAlias $if -ServerAddresses ("1.1.1.1","8.8.8.8")
-```
-
-**Verify:**
-```powershell
-Test-NetConnection 192.168.56.10 -Port 1514
-# Expected: TcpTestSucceeded: True
-```
-
-### 3. Wazuh agent installation
-
-```powershell
-Invoke-WebRequest -Uri "https://packages.wazuh.com/4.x/windows/wazuh-agent-4.9.0-1.msi" -OutFile "$env:TEMP\wazuh-agent.msi"
-
-Start-Process msiexec.exe -Wait -ArgumentList "/i $env:TEMP\wazuh-agent.msi /q WAZUH_MANAGER='192.168.56.10' WAZUH_AGENT_NAME='win-ep' WAZUH_REGISTRATION_SERVER='192.168.56.10'"
-
-NET START WazuhSvc
-```
-
-### 4. Critical fix: hostname resolution bug
-
-**Bug:** Wazuh agent 4.9.0 on Windows fails to resolve IP literals via `gethostbyname` (returns `'192.168.56.10'` with double quotes).
-
-**Cause:** When `Set-Content` was used to edit `ossec.conf` with `-Encoding UTF8`, it added BOM characters and inadvertently wrapped IPs in extra quotes.
-
-**Fix:** Use `.NET WriteAllLines` with UTF8 no-BOM encoding:
-
-```powershell
-Stop-Service WazuhSvc -Force
-
-$conf = "C:\Program Files (x86)\ossec-agent\ossec.conf"
-$lines = Get-Content $conf
-$lines = $lines -replace "<address>['""]?192\.168\.56\.10['""]?</address>", "<address>192.168.56.10</address>"
-$lines = $lines -replace "<manager_address>['""]?192\.168\.56\.10['""]?</manager_address>", "<manager_address>192.168.56.10</manager_address>"
-[System.IO.File]::WriteAllLines($conf, $lines, (New-Object System.Text.UTF8Encoding $false))
-
-Start-Service WazuhSvc
-```
-
-**Result:** Agent connects, registers, and starts sending events.
-
-### 5. Verification
-
-```bash
-# On siem
-sudo docker exec single-node-wazuh.manager-1 /var/ossec/bin/agent_control -l
-# ID: 001, Name: win-ep, IP: ..., Active
-```
-
-**Dashboard:** `https://192.168.56.10` → Agents → **win-ep Active** 🟢
+**DNS C2 beaconing detection (T1071.004) — the main build:**
+- Confirmed Suricata writes DNS query + answer records to eve.json; designed edge filter to keep query-only (answers are heavy CNAME chains).
+- Chose SIEM-layer behavioral analysis (path 2) over Suricata Lua (path 1) — avoids pfSense package-regeneration risk, cleaner separation of concerns, natural Phase 6 SOAR extension.
+- **Avoided an over-engineering spiral:** initial persistent-tail DNS collector collided with the alert collector's `pkill -x tail` (they'd kill each other). Tested `-tt` (breaks under background/systemd — job Stopped on SIGTTIN). Root discovery: **remote tail does NOT die when the SSH session is killed from the siem side** — it stays alive under a detached shell (not orphan ppid=1), which is exactly what caused historical accumulation. Resolution: abandon the persistent DNS tail entirely; use **batch byte-offset pull via cron** (no persistent process, no collision).
+- Built `dns-pull.sh` (batch), `c2-detect.py` (rate-based analyzer), cron (1-min), logrotate, `dnsanalyzer` service user.
+- Wired into Wazuh: added `/var/log/dns-analyzer` bind mount to docker-compose.yml (`docker compose up -d` to recreate), localfile block, rules 100306/100307.
+- **Verified end-to-end:** win-ep beacon (60 × `beacon-c2-test.example.com` @ 300ms) → pfSense → pull → analyzer alert (parent=example.com, count=60, medium) → Wazuh rule 100306 level 10 T1071.004, live in alerts.json / dashboard.
+- Commit `73e0ea1` + snapshot `phase5-dns-c2-detection-complete`.
 
 ---
 
-## شغلات معلقة في مكان آخر
+## Key Learnings & Principles
 
-### Wazuh credentials
-- لسه Default `SecretPassword` — لازم نغيرها من Dashboard UI:
-  - Indexer Management → Security → Internal users → admin → Reset password
-- ثم نحدث `docker-compose.yml` لتطابق
+**DNS C2 analyzer — the hard-won bugs (this session)**
+- **Py3.10 `datetime.fromisoformat()` rejects Suricata timestamps.** Suricata writes `+0300` (no colon); Py3.10 needs `+03:00`. Symptom was silent: `parse_ts()` returned None inside a try/except → every query filtered → zero alerts, exit 0 (looked like it "worked"). Fix: regex-insert colon in the tz offset before parsing. (Py3.11+ handles it natively.)
+- **heredoc-within-heredoc destroys regex escaping.** Writing `\\d` through a bash heredoc into Python produced `\\d` (literal backslash-d) in the file, not `\d`. The regex silently never matched. Fix: write the Python file with a clean heredoc where the Python string literal `'\\d'` collapses to `\d` on disk; verify the on-disk byte with `grep`, and unit-test `parse_ts` on a real timestamp before trusting it.
+- **Verify before assuming timing.** Repeated "empty alert" results were partly a real bug (above) and partly a 300s-window timing issue (beacon queries aged out before the analyzer ran). Always run the analyzer immediately after the beacon; use `wazuh-logtest` for a timing-independent rule check.
 
-### Snapshots
-- `wazuh-stack-deployed` (post Phase 1)
-- `post-hardening` (post Phase 2)
-- `agent-connected` (post agent enrollment) ← **هاد اللي بناخده الآن**
+**Wazuh rule-file ownership inside the container (critical, silent)**
+- Custom rule files live in the **`single-node_wazuh_etc` Docker volume**, NOT bind-mounted from the repo. The repo is a working copy; changes must be `docker cp`'d into `/var/ossec/etc/rules/` in the container, then reload.
+- **Ownership/permissions must match the working rule files exactly: `wazuh:wazuh`, mode `644`.** A `chown 1000:1000` + `chmod 660` made the file unreadable by wazuh-logtest/analysisd → `WARNING (1103): Could not open file ... Permission denied` → rule silently not loaded → no match. Same class of silent-permission failure as `usermod -aG adm wazuh` for auditd.
+- Diagnose with `wazuh-logtest` (shows `Could not open file` if perms are wrong) and confirm the rule is present: `docker exec ... grep -c 'id="100306"' /var/ossec/etc/rules/9997-suricata-mitre.xml`.
 
-### Documentation TBD
-- `docs/lab-setup.md` (step-by-step)
-- `docs/detection-coverage.md` (MITRE mapping table)
-- `docs/attack-scenarios/` (will be populated phase 5)
+**Wazuh custom-rule authoring**
+- JSON-decoded fields referenced **without `data.` prefix** (`analyzer`, `severity`, `parent_domain`); `data.` only appears in alert OUTPUT.
+- A non-Suricata JSON source (our analyzer) needs its own root rule with `<decoded_as>json</decoded_as>` + a distinguishing `<field>` (here `analyzer=dns-c2-ratebased`) — it does NOT chain off the Suricata base rule 100300.
+- Wazuh reads only **newly appended** lines after it starts watching a localfile; pre-existing lines are not re-read. Generate a fresh alert to test live delivery (logtest works on old lines for rule-logic checks).
 
----
+**Docker / bind mounts**
+- New host log paths need a **volume bind mount** in docker-compose.yml; mount changes → `docker compose up -d` (recreate). Config-only changes → `restart`.
+- Bind-mount the **directory** (`/var/log/dns-analyzer`), not a single file — single-file mounts break with logrotate/recreate.
+- `docker compose config` validates YAML before recreate.
 
-## Phase 3 — Sysmon + Detection Telemetry (Next Session)
+**Remote tail / SSH collection (FreeBSD/pfSense)**
+- **A remote `tail -F` does NOT die when the SSH session is killed from the collector side** — it survives under a detached shell (not orphan ppid=1). This is the real cause of tail accumulation, and why cleanup (`pkill -x tail`) is required for persistent-tail models.
+- `pkill -x tail` matches exact process name only — but with TWO persistent tail-based collectors on the same file, they'd kill each other. Resolved by making the DNS collector a **batch cron pull** (no persistent process) instead of a second tail.
+- `ssh -tt` is NOT a fix here: under background/systemd (no controlling terminal) the job is Stopped (SIGTTIN).
+- FreeBSD `tail` spawns a Capsicum `system.fileargs` helper that also shows as "tail" in `pgrep -x tail` (false +1). Count real tails with `ps -axo command= | grep -c '^tail -F'`.
 
-### المهام
+**pfSense / FreeBSD ops (carried forward)**
+- Default shell tcsh: `>!` force-clobber, `>&` combined redirect; no rsync (use scp / `ssh 'cat'`).
+- Script ssh must use explicit `-i /root/.ssh/id_ed25519_pfsense -o IdentitiesOnly=yes`.
+- Suricata config dir `.../suricata_4846_em1/`, log dir `/var/log/suricata/suricata_em14846/` (naming differs).
+- config.xml is source of truth; stale `<defaultgw4>` → edit `/conf/config.xml` + reload.
 
-1. **Sysmon installation with sysmon-modular config**
-   - Download from sysinternals/sysmon-modular
-   - Use Olaf Hartong's MITRE-mapped config (high fidelity, low noise)
-   - Verify Sysmon events appearing in Wazuh (event IDs 1, 3, 7, 10, 22, 23)
+**Wazuh in Docker (carried forward)**
+- Manager container `single-node-wazuh.manager-1`. ossec.conf = `config/wazuh_cluster/wazuh_manager.conf`.
+- Insert localfile before the LAST `</ossec_config>` (Python rfind) to avoid duplicating across blocks.
+- `9997-` rules load before `9998/9999`.
+- `docker compose restart` more reliable than `wazuh-control restart` after rule changes (latter can half-stop analysisd) — though `wazuh-control restart` worked cleanly this session for a rules-only reload.
 
-2. **PowerShell Script Block Logging (4104)**
-   - Enable via GPO or registry
-   - Catches obfuscated PowerShell after de-obfuscation
-
-3. **ASR (Attack Surface Reduction) rules**
-   - Block credential stealing from LSASS (GUID: 9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2)
-   - Block Office child processes
-   - Block executable content from email/web
-
-4. **Defender Operational log ingestion**
-   - Add Windows Event Log channel to Wazuh agent config
-   - Path: `Microsoft-Windows-Windows Defender/Operational`
-
-5. **Sysmon-modular ASR rules deployment**
-   - GitHub: olafhartong/sysmon-modular
-   - Choose `sysmonconfig.xml` (consolidated)
-
-### Reference commands (للجلسة الجاية)
-
-```powershell
-# Sysmon download
-$sysmonZip = "$env:TEMP\sysmon.zip"
-Invoke-WebRequest -Uri "https://download.sysinternals.com/files/Sysmon.zip" -OutFile $sysmonZip
-Expand-Archive $sysmonZip -DestinationPath "$env:TEMP\sysmon" -Force
-
-# sysmon-modular config
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/olafhartong/sysmon-modular/master/sysmonconfig.xml" -OutFile "$env:TEMP\sysmon\sysmonconfig.xml"
-
-# Install
-& "$env:TEMP\sysmon\Sysmon64.exe" -accepteula -i "$env:TEMP\sysmon\sysmonconfig.xml"
-
-# Verify
-Get-Service Sysmon64
-Get-WinEvent -ProviderName "Microsoft-Windows-Sysmon" -MaxEvents 5
-```
-
-```bash
-# على siem — ضيف Sysmon channel للـ agent config (centralized)
-sudo docker exec -it single-node-wazuh.manager-1 \
-    nano /var/ossec/etc/shared/default/agent.conf
-```
-
-Add inside `<agent_config>`:
-```xml
-<localfile>
-  <location>Microsoft-Windows-Sysmon/Operational</location>
-  <log_format>eventchannel</log_format>
-</localfile>
-<localfile>
-  <location>Microsoft-Windows-PowerShell/Operational</location>
-  <log_format>eventchannel</log_format>
-</localfile>
-<localfile>
-  <location>Microsoft-Windows-Windows Defender/Operational</location>
-  <log_format>eventchannel</log_format>
-</localfile>
-```
-
-Then restart Manager:
-```bash
-sudo docker exec single-node-wazuh.manager-1 /var/ossec/bin/wazuh-control restart
-```
+**Security-in-practice (carried forward)**
+- fail2ban `ignoreip` includes `10.10.10.0/24` (prevents self-ban from stream reconnects).
+- Default-deny egress: siem→github needs `github_egress` alias + LAN pass rule.
+- VBoxManage not in PATH; VM name `"siem  "` has trailing spaces → use UUID.
 
 ---
 
-## Phase 4 — Case Management Stack (Next Sessions)
+## Approach & Patterns
 
-### Plan
-
-1. New Docker Compose: `/opt/homelab-mdr/thehive/docker-compose.yml`
-2. Cassandra single-node (1.5 GB heap)
-3. TheHive 5 (1 GB heap)
-4. Cortex (800 MB)
-5. n8n (300 MB)
-
-### Resource check
-- Current siem usage: ~2.5 GB used (Manager 1.7, Indexer 1.4, Dashboard 0.2)
-- Adding TheHive stack: +3.5 GB
-- Total expected: ~6 GB / 9 GB → ~3 GB headroom ✅
-
-### Workflow design (Wazuh → TheHive)
-
-```
-Wazuh alert (level >= 7)
-    ↓
-n8n webhook (Wazuh integration)
-    ↓
-TheHive case creation (with observables)
-    ↓
-Cortex enrichment (VirusTotal, AbuseIPDB)
-    ↓
-Enrichment results back to case
-    ↓
-[If score > 70] → pfSense API block (later)
-```
+- Strict phase sequencing: infra before detection before threat sims.
+- Each session ends with: snapshots, commit + evidence, README/architecture updates.
+- Custom rules MITRE-mapped; ID namespacing by phase (Wazuh 100xxx; Suricata local 100000x).
+- Snapshot before risky steps (recreate, mounts); memory + disk are hard constraints.
+- Python heredoc scripts over manual nano; verify on-disk bytes before trusting.
+- **Empirical over assumption:** test the actual behavior (ARP, remote-tail survival, logtest) rather than reasoning from expectations — repeatedly the decisive move this session.
+- **Resist over-engineering:** the behavioral DNS engine is a Phase 6-scale project; this session shipped a light, verified rate-based detector and deferred entropy/cardinality/PSL to Phase 6.
+- Communication: Levantine Arabic + technical English.
 
 ---
 
-## Phase 5 — pfSense + Detection Engineering (Future)
+## Phase 6 hooks (what this session set up for SOAR)
 
-### High-level plan
-
-1. **pfSense VM** activation (already exists from previous attempts)
-2. Re-architect network with pfSense in path
-3. Suricata IDS configuration
-4. Suricata alerts → syslog → Wazuh integration
-5. Custom Wazuh rules for:
-   - RDP brute force (T1110.001)
-   - Port scan (T1046)
-   - PowerShell obfuscation (T1059.001)
-   - LSASS dump (T1003.001)
-   - Ransomware simulation (T1486)
-   - Living-off-the-land (T1218)
-
-### MITRE ATT&CK Navigator
-- Enable MITRE module in Wazuh Dashboard
-- Custom mapping for each rule
-- Export navigator JSON for portfolio screenshot
+- `c2-detect.py` alerts are **SOAR-ready JSON**: `parent_domain` + `src_ip` + `query_count` + `mitre`. Phase 6 flow: Wazuh alert → n8n → Cortex enrichment (domain reputation / passive DNS on `parent_domain`) → scoring → pfSense API block (TTL + RFC1918 allowlist + circuit breaker).
+- DNS behavioral engine extensions reserved for Phase 6: Shannon entropy on labels, unique-subdomain cardinality per eTLD+1, proper PSL (tldextract), real-time stream instead of 1-min batch.
+- Memory planning required before Phase 6 (TheHive + Cassandra + Cortex + n8n) — 16 GB ceiling is fully allocated.
 
 ---
 
-## Troubleshooting Notes (للمرجع)
-
-### Issue: VirtualBox Internal Network not actually connecting VMs
-
-**Symptom:** Two VMs on same Internal Network can't ARP each other.
-
-**Resolution:** Switched everything to Host-only Adapter (same vboxnet0). Single subnet 192.168.56.0/24 for both siem and win-ep. NAT NIC for internet.
-
-### Issue: nano YAML indentation breaks netplan
-
-**Symptom:** `Error in network definition: unknown renderer 'networked'`
-
-**Resolution:** YAML standard is 2 spaces per indent level. Use inline arrays `[1.1.1.1, 8.8.8.8]` to avoid nested indentation. Use `sed -i 's/networked/networkd/' file.yaml` for fixes.
-
-### Issue: Wazuh agent on Windows can't resolve IP literal
-
-**Symptom:** `Could not resolve hostname '192.168.56.10'` despite the IP being correct.
-
-**Resolution:** PowerShell `Set-Content -Encoding UTF8` adds BOM. Use `.NET WriteAllLines` with `UTF8Encoding $false` (no BOM).
-
-### Issue: cloud-init keeps overwriting netplan
-
-**Symptom:** enp0s9 (or any new interface) disappears after reboot.
-
-**Resolution:** Disable cloud-init network management:
-```bash
-echo 'network: {config: disabled}' > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
-```
-
-### Issue: HostMemoryLow when starting win-ep
-
-**Symptom:** VirtualBox pauses VM with "Unable to allocate and lock memory".
-
-**Resolution:** Lowered win-ep RAM from 3072 to 2048 MB. siem (9 GB) + win-ep (2 GB) + Windows host (~5 GB) = 16 GB fits.
-
-### Issue: Manager bytes written 108 GB in 2 days
-
-**Symptom:** Disk usage growing rapidly even without endpoints.
-
-**Resolution:** Self-monitoring traffic with no retention. ISM 90-day retention + `number_of_replicas: 0` fixed it.
-
-### Issue: Docker bypasses UFW
-
-**Symptom:** UFW rules ignored for Docker-exposed ports.
-
-**Resolution:** Add explicit DOCKER-USER iptables rule. Save with `iptables-persistent`.
-
----
-
-## شو لازم نتذكر في الجلسة الجاية
-
-1. **siem trailing spaces:** اسم الـ VM في VirtualBox = `"siem  "` (مع مسافتين). Important for `VBoxManage` CLI.
-2. **Wazuh password ما اتغير** - لسه `SecretPassword` افتراضي.
-3. **Hostname resolution bug** - أي تعديل على `ossec.conf` لازم يكون UTF-8 **no BOM**. استخدم `.NET WriteAllLines`.
-4. **Sysmon-modular** هو الـ config اللي رح نستخدمه (مش Olaf's individual modules).
-5. **agent.conf** centralized — التعديلات هناك تطبق على كل الـ agents تلقائيا.
-6. **GitHub PAT** stored at `~/.github-token` على siem. Expires 90 days.
-7. **Cassandra heap** = 1.5 GB لما نضيف TheHive — already budgeted.
-8. **pfSense VM** موجود بس بـ password قديم — نحتاج reset أو reinstall.
-
----
-
-## Files location reference
+## Files Reference
 
 ```
-On siem:
-  /opt/homelab-mdr/wazuh/single-node/docker-compose.yml   # main wazuh stack
-  /opt/homelab-mdr/wazuh/single-node/config/              # certs and config
-  ~/projects/homelab-mdr/                                  # GitHub repo
-  ~/.github-token                                          # PAT
-  /etc/netplan/50-cloud-init.yaml                          # network config
-  /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg     # cloud-init disable
-  /etc/fail2ban/jail.local                                 # fail2ban config
-  /etc/ssh/sshd_config.d/99-hardening.conf                 # ssh hardening
-  /etc/ufw/                                                # ufw rules
+siem:
+  /opt/homelab-mdr/wazuh/single-node/docker-compose.yml   # bind mounts: suricata-pfsense + dns-analyzer
+  .../config/wazuh_cluster/wazuh_manager.conf             # ossec.conf (+ localfile blocks)
+  /var/log/suricata-pfsense/eve-alerts.json               # Pipeline 1 (alerts), logrotate
+  /var/log/dns-analyzer/dns-queries.stream                # Pipeline 2 raw DNS queries, logrotate
+  /var/log/dns-analyzer/alerts.json                       # Pipeline 2 C2 alerts → Wazuh
+  /var/log/dns-analyzer/.last_size                        # byte offset for batch pull
+  /usr/local/bin/suricata-collector.sh                    # Pipeline 1 (systemd, pkill -x tail)
+  /usr/local/bin/dns-pull.sh                              # Pipeline 2 batch pull (cron)
+  /opt/dns-analyzer/c2-detect.py                          # rate-based C2 analyzer
+  /etc/cron.d/dns-pull                                    # 1-min pull schedule
+  /etc/logrotate.d/dns-analyzer
+  /etc/logrotate.d/suricata-pfsense
+  /etc/fail2ban/jail.local                                # ignoreip 10.10.10.0/24
+  ~/projects/homelab-mdr/                                 # GitHub repo
+    detection/wazuh-rules/9997-suricata-mitre.xml         # 100300-100307
+    detection/wazuh-rules/9998-siem-self-monitoring.xml
+    detection/wazuh-rules/9998-credential-access.xml      # 100310-100313
+    detection/wazuh-rules/9999-windows-powershell.xml
+    detection/suricata-rules/custom.rules                 # 1000001/1000002/1000003
+    detection/suricata-rules/disablesid.conf              # 26470
+    detection/dns-analyzer/c2-detect.py
+    detection/pipeline/suricata-collector.sh + .service
+    detection/pipeline/dns-pull.sh + dns-pull.cron + dns-analyzer.logrotate
+    docs/evidence/phase5/
 
-On win-ep:
-  C:\Program Files (x86)\ossec-agent\ossec.conf            # agent config
-  C:\Program Files (x86)\ossec-agent\ossec.log             # agent log
-  C:\Windows\System32\drivers\etc\hosts                    # hosts file
+pfSense:
+  /usr/local/etc/suricata/suricata_4846_em1/              # Suricata config/rules
+  /var/log/suricata/suricata_em14846/eve.json             # EVE output (alerts + dns)
+  /root/.ssh/id_ed25519_pfsense                           # collector key
 ```
-
----
-
-## Commands quick-ref (للجلسة الجاية)
-
-### SSH للـ siem
-```powershell
-ssh ahmadj@192.168.56.10
-```
-
-### Docker stats
-```bash
-docker stats --no-stream
-```
-
-### Wazuh logs
-```bash
-sudo docker logs single-node-wazuh.manager-1 --tail 50
-sudo docker logs single-node-wazuh.indexer-1 --tail 50
-sudo docker logs single-node-wazuh.dashboard-1 --tail 50
-```
-
-### Agent control
-```bash
-sudo docker exec single-node-wazuh.manager-1 /var/ossec/bin/agent_control -l
-sudo docker exec single-node-wazuh.manager-1 /var/ossec/bin/manage_agents -l
-```
-
-### Restart Wazuh stack
-```bash
-cd /opt/homelab-mdr/wazuh/single-node
-docker compose restart
-```
-
-### Git push (PAT في `~/.github-token`)
-```bash
-cd ~/projects/homelab-mdr
-git add .
-git commit -m "..."
-git push
-```
-
----
-
-## End of Session Log
