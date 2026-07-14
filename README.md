@@ -24,7 +24,9 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | 4 — Network re-architecture | pfSense in-path gateway, LAN segmentation | ✅ Implemented |
 | 4.5 — SIEM self-monitoring | Agent on the SIEM + auditd, tamper detection for the monitoring stack | ✅ Implemented |
 | 5 — Network IDS + DNS detection | Suricata on pfSense + Suricata→Wazuh pipeline, DNS tunneling + behavioral C2 beaconing | ✅ Implemented |
-| 6 — SOAR | TheHive 5 + Cassandra + Cortex + n8n, automated response with safety controls | ⏳ Roadmap |
+| 6-A — SOAR pipeline | Wazuh → n8n integration, high-severity alert triage and routing | ✅ Implemented |
+| 6-B — Automated response | Cortex enrichment + pfSense API block (TTL + RFC1918 allowlist + circuit breaker) | ⏳ Roadmap |
+| 6-C — Case management | TheHive 5 + Cassandra | ⏳ Roadmap |
 | 7 — Threat simulation | Ransomware profile (T1486) run end to end against the stack | ⏳ Roadmap |
 
 ---
@@ -97,6 +99,21 @@ Broad coverage layered on top of the custom rules, so the lab isn't blind betwee
 
 ---
 
+### SOAR pipeline (Phase 6-A)
+
+Detection is wired to orchestration: Wazuh forwards every alert at level ≥ 10 to an n8n workflow that triages and tags it for response. The forwarder is a Wazuh `integration` script; the level filter keeps low-severity noise out of the automation while letting *any* high-severity detection through — so new detections reach the SOAR layer automatically, without per-rule wiring.
+
+```
+Wazuh alert (level ≥ 10)
+  → integratord runs a custom integration script
+  → HTTP POST → n8n production webhook
+  → IF (level ≥ 10) → HIGH_PRIORITY (enrich + block, wired in 6-B) / LOW_PRIORITY (logged)
+```
+
+n8n runs as its own container (separate compose, isolated from the Wazuh stack, bound to the LAN interface only). The pipeline was validated end to end with **real attacks** against the endpoint — DNS C2 beaconing (T1071.004), Mimikatz (T1003), an LSASS dump via `comsvcs.dll` MiniDump (T1003.001), and browser credential theft via `esentutl /vss` on Chrome and Edge (T1555.003) — all four fired in Wazuh and reached n8n. The SOAR layer is threat-category-agnostic, not tied to any single detection.
+
+Automated *containment* is deliberately deferred to Phase 6-B: blocking runs through the SOAR path with enrichment (Cortex) and safety controls (block TTL, RFC1918 allowlist, circuit breaker) rather than blind inline blocking on a single gateway.
+
 ## Key design decisions
 
 - **Detection before response.** Phase 5 is IDS-only by design; automated blocking is reserved for the SOAR phase with safety controls (block TTL, RFC1918 allowlist, circuit breaker).
@@ -134,6 +151,13 @@ homelab-mdr/
 │       ├── dns-pull.sh                  # DNS query batch pull (cron)
 │       ├── dns-pull.cron                # 1-min schedule
 │       └── dns-analyzer.logrotate       # stream + alert retention
+├── soar/                                # Phase 6-A SOAR
+│   ├── n8n/
+│   │   ├── docker-compose.yml           # n8n container (isolated)
+│   │   └── workflow-wazuh-soar-triage.json
+│   └── wazuh-integration/
+│       ├── custom-n8n                   # Wazuh → n8n forwarder script
+│       └── ossec-integration-block.xml  # <integration> block (level>=10)
 └── docs/
     ├── architecture.svg / architecture.png
     └── evidence/                        # screenshots per phase
@@ -143,7 +167,7 @@ homelab-mdr/
 
 ## Roadmap
 
-- **Phase 6 — SOAR:** TheHive 5 (case management) + Cortex (observable enrichment) + n8n (orchestration). Alert → auto-create case → enrich → score → automated containment via the pfSense API, gated by block TTL, an RFC1918 allowlist, and a circuit breaker. The DNS analyzer already emits SOAR-ready JSON for this path.
+- **Phase 6 — SOAR:** 6-A (done) wired Wazuh → n8n alert triage. Next: 6-B adds Cortex enrichment (VirusTotal / AbuseIPDB / passive DNS) and automated containment via the pfSense API — gated by block TTL, an RFC1918 allowlist, and a circuit breaker; 6-C adds TheHive 5 + Cassandra for case management. The DNS analyzer and every level ≥ 10 detection already feed the SOAR path.
 - **Phase 7 — Threat simulation:** a ransomware profile (T1486 and the surrounding chain) run against the full stack to validate detections end to end.
 - **Near-term detection extensions:** Shannon entropy and unique-subdomain cardinality on the DNS analyzer, JA3-based C2 hunting, index retention policy, and promoting high-confidence signatures to inline IPS via the SOAR path.
 

@@ -3,7 +3,7 @@
 > Build journal: SOC Detection Engineering Lab. From idea to full detection stack.
 > **GitHub:** https://github.com/AJahmadcyber/homelab-mdr
 
-**Last updated:** July 13, 2026 — Phase 5 complete (Suricata IDS + Suricata→Wazuh pipeline + DNS-layer detection: tunneling T1048 + rate-based C2 beaconing T1071.004).
+**Last updated:** July 14, 2026 — Phase 6-A complete (n8n SOAR pipeline: Wazuh → n8n triage for high-severity alerts, validated end-to-end with real attacks). Phase 6-B (Cortex + pfSense API block) next.
 
 ---
 
@@ -17,7 +17,9 @@
 | 4 | pfSense in-path network re-architecture | ✅ Done |
 | 4.5 | SIEM Self-Monitoring (agent 002 + auditd + rules 100200–100205) | ✅ Done |
 | 5 | Suricata IDS on pfSense + Wazuh integration + DNS-layer detection | ✅ **Done** |
-| 6 | TheHive 5 + Cassandra + Cortex + n8n SOAR | ⏳ **Next** |
+| 6-A | n8n SOAR: Wazuh → n8n triage pipeline (high-sev alerts) | ✅ **Done** |
+| 6-B | Cortex enrichment + pfSense API block (TTL + allowlist + circuit breaker) | ⏳ **Next** |
+| 6-C | TheHive 5 + Cassandra case management (needs RAM planning) | ⏳ Planned |
 | 7 | GentleKiller ransomware threat profile (T1486+) | ⏳ Planned last |
 
 ---
@@ -242,6 +244,57 @@ Suricata eve.json (pfSense)
 - `c2-detect.py` alerts are **SOAR-ready JSON**: `parent_domain` + `src_ip` + `query_count` + `mitre`. Phase 6 flow: Wazuh alert → n8n → Cortex enrichment (domain reputation / passive DNS on `parent_domain`) → scoring → pfSense API block (TTL + RFC1918 allowlist + circuit breaker).
 - DNS behavioral engine extensions reserved for Phase 6: Shannon entropy on labels, unique-subdomain cardinality per eTLD+1, proper PSL (tldextract), real-time stream instead of 1-min batch.
 - Memory planning required before Phase 6 (TheHive + Cassandra + Cortex + n8n) — 16 GB ceiling is fully allocated.
+
+---
+
+## Phase 6-A — SOAR Pipeline (n8n) — Full Record (July 14)
+
+**Goal:** first SOAR automation layer — Wazuh forwards high-severity alerts to n8n, which triages and tags them for response. Detection → orchestration wired end to end. Automated *containment* deferred to Phase 6-B (conscious decision, not laziness — blocking without enrichment + safety controls is dangerous on a single gateway).
+
+### RAM reality check (decided the phased approach)
+- Host: 15.9 GB total, ~3 GB free at rest. siem assigned 7 GB but **actual `available` inside siem = 4.3 GB** (Wazuh stack uses only ~2.6 GB: indexer 1.37 + manager 1.13 + dashboard 0.18).
+- **Do NOT raise siem RAM from host free pool** — would choke Windows host (only ~3 GB free). If ever needed, swap from win-ep (saved state, 2 GB) — never from host free.
+- n8n fits comfortably in siem's headroom (~0.7 GB). **Full TheHive+Cassandra+Cortex stack does NOT fit** → phased: 6-A (n8n only) now, 6-B (Cortex, JVM-tuned or on-demand), 6-C (TheHive, needs RAM planning).
+
+### What was built
+- **n8n** (`/opt/homelab-mdr/n8n/docker-compose.yml`) — separate compose, own network + volume, **NOT** touching the Wazuh stack. Bound to LAN interface only (`10.10.10.10:5678`), `N8N_SECURE_COOKIE=false` (HTTP on LAN), `WEBHOOK_URL` set so generated webhooks use the siem IP.
+- **Wazuh integration** — `custom-n8n` script in `/var/ossec/integrations/` (sh + curl, POSTs raw alert JSON to the n8n production webhook). `<integration>` block in ossec.conf: `level>=10`, `alert_format=json`.
+- **n8n workflow** "Wazuh SOAR triage": `Webhook → IF (rule.level >= 10) → true: Edit Fields (HIGH_PRIORITY, enrich+block placeholder) / false: Edit Fields (LOW_PRIORITY, logged)`.
+
+### Pipeline
+```
+Wazuh alert (level >= 10)
+  → integratord runs /var/ossec/integrations/custom-n8n
+  → curl POST → http://10.10.10.10:5678/webhook/wazuh-alert
+  → n8n: IF rule.level>=10 → HIGH_PRIORITY tag / LOW_PRIORITY tag
+```
+
+### Validated end-to-end with REAL attacks (not synthetic — this was the key insight)
+Synthetic tests (Write-Output of a signature string) do NOT fire the endpoint rules — those chain off Sysmon **EID1 process creation**, so they need a real process with the malicious command line. Confirmed the rules are precise (won't match on mere text). Ran real commands on win-ep (Defender real-time already off; snapshot `pre-atomic-6a-validation` taken first):
+
+| Threat | Rule(s) | Level | MITRE | Test |
+|---|---|---|---|---|
+| DNS C2 beaconing | 100306 | 10 | T1071.004 | 60× beacon to example.com |
+| Mimikatz | 100312 | 13 | T1003 | 4104 script-block signature |
+| LSASS dump | 100310 + 100311 | 12 | T1003.001 | real `rundll32 comsvcs.dll MiniDump <lsass pid>` |
+| Browser cred theft | 100313 | 12 | T1555.003 | real `esentutl /y /vss` on Chrome + Edge Login Data |
+
+All four fired in Wazuh **and** produced n8n executions → the SOAR layer is **threat-category-agnostic** (level-based), not C2-specific. LSASS fired **two** rules (100310 access-level + 100311 comsvcs cmdline) = layered detection. Dump file + stolen DBs deleted after (contained real credentials).
+
+### Key learnings (Phase 6-A)
+- **`level` filter ≠ per-rule filter.** `<integration><level>10</level>` forwards *any* alert ≥ 10 — no need to enumerate rule IDs. New high-sev detections flow to SOAR automatically. Per-category branching belongs *inside* n8n (Phase 6-B: C2 → domain block, credential → host isolate), not at the Wazuh filter.
+- **n8n workflow name is cosmetic** — every execution shows the workflow name regardless of alert content. Renamed to "Wazuh SOAR triage" (was "DNS C2 triage") since it handles all categories.
+- **n8n Publish = save + activate.** Production webhook (`/webhook/...`) only works after Publish; test webhook (`/webhook-test/...`) only during "Listen for test event".
+- **Real vs synthetic tests:** EID1-chained rules (LSASS/stealer) need a real process; a synthetic 4104 string fires only the 4104-based rule (Mimikatz). Test at the layer the rule watches.
+- **Docker Hub blocked by default-deny egress** — pulling n8n required a TEMP egress rule on pfSense (siem → any:443). Left OPEN intentionally for the upcoming Cortex/analyzer pulls in 6-B; **must be disabled after 6-B image pulls** (back to default-deny).
+
+### Snapshots / commit
+- siem snapshot `phase6a-soar-validated` (replaced `phase5-complete-documented`, which was merged/deleted to reclaim space). win-ep `pre-atomic-6a-validation`.
+- Commit `15712aa` — `feat(soar): Phase 6-A — Wazuh → n8n SOAR pipeline`.
+
+### Phase 6-B hooks (next)
+- HIGH_PRIORITY branch in n8n is the insertion point: → Cortex enrichment (VirusTotal / AbuseIPDB / passive DNS on `parent_domain` or `src_ip`) → scoring → pfSense API block with **TTL + RFC1918 allowlist + circuit breaker**.
+- Cortex is JVM-heavy — tune heap or run on-demand (RAM ceiling). TEMP egress already open for image pulls.
 
 ---
 
