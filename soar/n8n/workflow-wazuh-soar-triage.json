@@ -1,0 +1,152 @@
+{
+  "name": "Wazuh SOAR triage",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wazuh-alert",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "88f78a46-265e-4467-9411-628fb386b474",
+      "name": "Webhook",
+      "webhookId": "fcf3da7c-4086-419b-9cc1-76f6fa51b0ca"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "718e3e5e-60e8-4e78-b568-39ad123e0c3e",
+              "leftValue": "={{ $json.body.rule.level }}",
+              "rightValue": 10,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        208,
+        0
+      ],
+      "id": "f503d3d8-3a28-4627-a099-64801061fabf",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3abd6c63-d9e6-41c4-a6ff-7afd6a254126",
+              "name": "soar_action",
+              "value": "HIGH_PRIORITY - enrich + block (pfSense API in 6-B)",
+              "type": "string"
+            },
+            {
+              "id": "07f21403-b3c5-4d22-a853-651b1ddc800e",
+              "name": "priority",
+              "value": "high",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        416,
+        -96
+      ],
+      "id": "180344bb-0a97-45fa-afdb-54ae32f11277",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e3042e23-4d1b-4774-b68e-2386573e0377",
+              "name": "soar_action",
+              "value": "LOW_PRIORITY - logged, no action",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        416,
+        96
+      ],
+      "id": "298d4e40-d46a-43e0-8a6b-3de88f51dbce",
+      "name": "Edit Fields1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "8a3d702c-defe-4f0b-884e-f740456c74ec",
+  "meta": {
+    "instanceId": "943ca4efbad7f21362b90128b4ec06777c84838dfa6dbe6f8d0358d3c5bf3a20"
+  },
+  "nodeGroups": [],
+  "id": "v3K5XG32n60QDNg0",
+  "tags": []
+}

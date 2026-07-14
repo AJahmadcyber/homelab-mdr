@@ -1,0 +1,10 @@
+#!/bin/sh
+# Wazuh → n8n SOAR integration
+# Wazuh passes: $1 = alert file path, $2 = api key (unused), $3 = hook url
+ALERT_FILE="$1"
+HOOK_URL="$3"
+# POST the raw alert JSON to the n8n production webhook
+/usr/bin/curl -s -m 10 -X POST "$HOOK_URL" \
+  -H "Content-Type: application/json" \
+  -d @"$ALERT_FILE" > /dev/null 2>&1
+exit 0
