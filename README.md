@@ -25,7 +25,7 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | 4.5 — SIEM self-monitoring | Agent on the SIEM + auditd, tamper detection for the monitoring stack | ✅ Implemented |
 | 5 — Network IDS + DNS detection | Suricata on pfSense + Suricata→Wazuh pipeline, DNS tunneling + behavioral C2 beaconing | ✅ Implemented |
 | 6-A — SOAR pipeline | Wazuh → n8n integration, high-severity alert triage and routing | ✅ Implemented |
-| 6-B — Automated response | Cortex enrichment + pfSense API block (TTL + RFC1918 allowlist + circuit breaker) | ⏳ Roadmap |
+| 6-B — Automated response | Host isolation via pfSense REST API + allowlist + circuit breaker + investigation tickets | ✅ Core implemented |
 | 6-C — Case management | TheHive 5 + Cassandra | ⏳ Roadmap |
 | 7 — Threat simulation | Ransomware profile (T1486) run end to end against the stack | ⏳ Roadmap |
 
@@ -114,6 +114,24 @@ n8n runs as its own container (separate compose, isolated from the Wazuh stack, 
 
 Automated *containment* is deliberately deferred to Phase 6-B: blocking runs through the SOAR path with enrichment (Cortex) and safety controls (block TTL, RFC1918 allowlist, circuit breaker) rather than blind inline blocking on a single gateway.
 
+### Automated containment + investigation tickets (Phase 6-B)
+
+The SOAR layer now closes the loop from detection to response. When a high-severity alert reaches n8n, the workflow extracts the source host, runs it past two safety gates, and — if it passes — isolates the host through the pfSense REST API:
+
+```
+alert (level >= 10) -> extract src_ip
+  -> SAFETY: infrastructure allowlist (gateway / SIEM / analyst host are never blockable)
+           + circuit breaker (halt if too many blocks in a short window)
+  -> pfSense REST API: add IP to the soar_blocklist alias -> apply
+  -> generate a structured investigation ticket
+```
+
+The allowlist and circuit breaker are enforced both as visible n8n nodes and in a standalone script, so a bad or spoofed alert can never take down the lab's own infrastructure — verified by tests that deliberately tried to block the gateway and the SIEM (both refused), and a burst that tripped the circuit breaker. The pfSense API key is held as an n8n credential, never written into the exported workflow. The firewall block rule stays disabled (dry-run) by default and is enabled only for live containment tests.
+
+Every alert also produces a professional, TheHive-ready **investigation ticket**: ticket key, priority with an SLA, TLP, MITRE technique, detection details, TheHive-style observables, an event timeline, the automated action taken, enrichment placeholders (for Cortex — VirusTotal / AbuseIPDB), a seven-step L1 investigation checklist, and a disposition field (True Positive / False Positive / Escalated). This gives an analyst a realistic case to triage, mirroring what lands in a real SOC queue.
+
+The whole pipeline was validated end to end with a **real multi-stage APT attack chain** on the endpoint (discovery -> credential access -> persistence -> defense evasion -> C2): 15 detection rules fired across 13 MITRE techniques and 6 tactics, and the DNS C2 detection automatically isolated the endpoint on the firewall — no manual step. Automated containment via the firewall's native API is exactly the pattern an enterprise would implement (with PAN-OS / FortiOS APIs in place of the open-source package).
+
 ## Key design decisions
 
 - **Detection before response.** Phase 5 is IDS-only by design; automated blocking is reserved for the SOAR phase with safety controls (block TTL, RFC1918 allowlist, circuit breaker).
@@ -151,13 +169,20 @@ homelab-mdr/
 │       ├── dns-pull.sh                  # DNS query batch pull (cron)
 │       ├── dns-pull.cron                # 1-min schedule
 │       └── dns-analyzer.logrotate       # stream + alert retention
-├── soar/                                # Phase 6-A SOAR
+├── soar/                                # Phase 6 SOAR (triage + containment)
 │   ├── n8n/
 │   │   ├── docker-compose.yml           # n8n container (isolated)
-│   │   └── workflow-wazuh-soar-triage.json
-│   └── wazuh-integration/
-│       ├── custom-n8n                   # Wazuh → n8n forwarder script
-│       └── ossec-integration-block.xml  # <integration> block (level>=10)
+│   │   └── workflow-wazuh-soar-triage.json  # triage + block + ticket flow
+│   ├── wazuh-integration/
+│   │   ├── custom-n8n                   # Wazuh → n8n forwarder script
+│   │   └── ossec-integration-block.xml  # <integration> block (level>=10)
+│   ├── scripts/                         # 6-B containment + DNS pipeline
+│   │   ├── soar-block.py                # host-isolation blocker (allowlist + circuit breaker)
+│   │   ├── dns-pull.sh                  # pull DNS queries from pfSense
+│   │   ├── c2-detect.py                 # rate-based DNS C2 detector
+│   │   └── cron-dns-pipeline            # cron: pull && analyze, every minute
+│   └── pfsense-api/
+│       └── README.md                    # REST API setup + mechanics
 └── docs/
     ├── architecture.svg / architecture.png
     └── evidence/                        # screenshots per phase
@@ -167,7 +192,7 @@ homelab-mdr/
 
 ## Roadmap
 
-- **Phase 6 — SOAR:** 6-A (done) wired Wazuh → n8n alert triage. Next: 6-B adds Cortex enrichment (VirusTotal / AbuseIPDB / passive DNS) and automated containment via the pfSense API — gated by block TTL, an RFC1918 allowlist, and a circuit breaker; 6-C adds TheHive 5 + Cassandra for case management. The DNS analyzer and every level ≥ 10 detection already feed the SOAR path.
+- **Phase 6 — SOAR:** 6-A wired Wazuh → n8n triage; 6-B (core done) added automated host isolation via the pfSense REST API — gated by an infrastructure allowlist and a circuit breaker — plus professional investigation tickets, validated with a real multi-stage attack chain. Remaining in 6-B: block TTL (auto-unblock), Cortex enrichment (VirusTotal / AbuseIPDB) feeding the ticket, and DNS-level domain/subdomain blocking. 6-C adds TheHive 5 + Cassandra for case management, where the tickets land as investigable cases.
 - **Phase 7 — Threat simulation:** a ransomware profile (T1486 and the surrounding chain) run against the full stack to validate detections end to end.
 - **Near-term detection extensions:** Shannon entropy and unique-subdomain cardinality on the DNS analyzer, JA3-based C2 hunting, index retention policy, and promoting high-confidence signatures to inline IPS via the SOAR path.
 

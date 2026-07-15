@@ -3,7 +3,7 @@
 > Build journal: SOC Detection Engineering Lab. From idea to full detection stack.
 > **GitHub:** https://github.com/AJahmadcyber/homelab-mdr
 
-**Last updated:** July 14, 2026 — Phase 6-A complete (n8n SOAR pipeline: Wazuh → n8n triage for high-severity alerts, validated end-to-end with real attacks). Phase 6-B (Cortex + pfSense API block) next.
+**Last updated:** July 15, 2026 — Phase 6-B core complete (automated host isolation via pfSense REST API + safety controls + professional investigation tickets, validated end-to-end with a real multi-stage APT attack chain). Remaining in 6-B: TTL auto-unblock, Cortex enrichment, domain/subdomain block.
 
 ---
 
@@ -18,7 +18,7 @@
 | 4.5 | SIEM Self-Monitoring (agent 002 + auditd + rules 100200–100205) | ✅ Done |
 | 5 | Suricata IDS on pfSense + Wazuh integration + DNS-layer detection | ✅ **Done** |
 | 6-A | n8n SOAR: Wazuh → n8n triage pipeline (high-sev alerts) | ✅ **Done** |
-| 6-B | Cortex enrichment + pfSense API block (TTL + allowlist + circuit breaker) | ⏳ **Next** |
+| 6-B | Host isolation via pfSense REST API + allowlist + circuit breaker + investigation tickets | ✅ **Core done** (TTL/Cortex/domain-block remain) |
 | 6-C | TheHive 5 + Cassandra case management (needs RAM planning) | ⏳ Planned |
 | 7 | GentleKiller ransomware threat profile (T1486+) | ⏳ Planned last |
 
@@ -295,6 +295,63 @@ All four fired in Wazuh **and** produced n8n executions → the SOAR layer is **
 ### Phase 6-B hooks (next)
 - HIGH_PRIORITY branch in n8n is the insertion point: → Cortex enrichment (VirusTotal / AbuseIPDB / passive DNS on `parent_domain` or `src_ip`) → scoring → pfSense API block with **TTL + RFC1918 allowlist + circuit breaker**.
 - Cortex is JVM-heavy — tune heap or run on-demand (RAM ceiling). TEMP egress already open for image pulls.
+
+---
+
+## Phase 6-B — SOAR Containment + Investigation Tickets — Full Record (July 15)
+
+**Goal:** turn the SOAR layer from alert-triage into automated *containment* — high-severity alerts drive automated host isolation through the pfSense REST API, gated by safety controls, and every alert produces a professional SOC investigation ticket (the training-value core; TheHive-ready).
+
+### RAM upgrade (this session)
+- siem raised 7 -> 8 GB (win-ep lowered 2 -> 1.5 GB to compensate; taken from win-ep's saved allocation, NOT the host free pool). Verified: siem total 7.8Gi, available ~4.8Gi, swap clean. Host stays ~1-2 GB free with 3 VMs — tight but stable; win-ep kept powered off except during live attack tests.
+
+### pfSense REST API (the firewall-automation foundation)
+- Installed **pfSense-pkg-RESTAPI v2.4.3** (`pfrest/pfSense-pkg-RESTAPI`, the repo moved from jaredhendrickson13). Latest releases dropped 2.7.2 support; v2.4.3 is the newest **stable** that ships a 2.7.2 CE package. Clean install.
+- **Security:** Enabled, Auth = API Key, Login Protection ON, Read-Only OFF, **Allowed Interfaces = LAN only** (WAN removed — never expose the firewall API to WAN). Key = SHA256/24-byte.
+- **API key stored as an n8n credential** (Header Auth, name `X-API-Key`) — NOT written into the workflow, so the exported JSON is safe for the public repo (verified: no key in export, only a credential id/name reference).
+- **API mechanics learned (documented in soar/pfsense-api/README.md):**
+  - Base `https://10.10.10.1/api/v2/`, header `X-API-Key: <key>`, `-k` for self-signed.
+  - **`Accept: application/json` is REQUIRED** — pfSense rejects the default multi-value Accept header ("No content handler exists").
+  - PATCH/DELETE need the object `id` **in the JSON body**, not the query string.
+  - `apply` is async: POST /firewall/apply returns `applied:false` immediately, then `True` after ~seconds (not an error).
+  - Endpoints: /firewall/rules, /firewall/rule, /firewall/alias, /firewall/aliases, /firewall/apply.
+- **Blocking objects:** alias `soar_blocklist` (id 7, host) + block rule (id 12: source=soar_blocklist, dest=any, lan, log=true). Rule kept **DISABLED (dry-run)** by default; enabled only during live containment tests, disabled again after.
+
+### Safety controls — built first, before any real block (soar/scripts/soar-block.py + mirrored inline in n8n)
+- **Infrastructure allowlist** — NEVER block 10.10.10.1 (gateway), 10.10.10.10 (siem), 10.10.10.2 (ThinkPad). Verified: all three REFUSED with a logged reason.
+- **Circuit breaker** — max 5 blocks / 10-min window, state-tracked in /opt/soar/block-state.json. Verified: 6th rapid block TRIPPED and was refused.
+- IP-format validation + dedupe (`already_blocked`). All controls tested with harmless TEST-NET IPs (192.0.2.x) before any live use.
+
+### n8n containment flow
+`Webhook -> IF(level>=10) -> HIGH_PRIORITY(Edit Fields) -> Code(extract src_ip + allowlist decision) -> IF(action==allow_block) -> HTTP Request(PATCH soar_blocklist, add IP) -> HTTP Request(POST apply) -> Code(build investigation ticket)`; false branch -> Edit Fields (logged, no block). The allowlist/decision logic is visible as n8n nodes (good for portfolio review), and also enforced in the standalone script.
+
+### Investigation ticket (the training-value core — TheHive-ready)
+Professional SOC/Jira-grade JSON produced per alert: `ticket_key` (SOC-YYYYMMDD-HHMMSS), `summary`, `priority`+`sla_due_utc` (Critical=1h/High=4h/Medium=24h), `tlp`, MITRE technique(s), detection details, **observables** (TheHive-style ip/domain with ioc flag), **timeline**, `automated_response`, **Cortex enrichment placeholders** (virustotal/abuseipdb — pending, filled in later 6-B), a 7-step **L1 investigation checklist**, `work_notes`, `disposition` (TruePositive/FalsePositive/Escalated), and a PICERL playbook line. This is what an L1 analyst will actually investigate; it lands in TheHive as a case in 6-C.
+
+### DNS pipeline root-cause fix (important)
+- **Bug found:** the cron ran `dns-pull.sh` only — the analyzer `c2-detect.py` was NOT in cron. Beacons were pulled into the stream but never analyzed, so 100306 never fired automatically (we'd been running the analyzer by hand). This was why the first attack-chain run didn't auto-block.
+- **Fix:** cron now runs `dns-pull.sh && c2-detect.py` every minute — the DNS C2 pipeline is now fully automatic end to end.
+- Also: the analyzer reads the whole stream each run and filters by a 300s window (there is no offset in the analyzer itself — the `.last_size` belongs to dns-pull); the dns-pull rotation guard resets the offset if the stream shrinks (logrotate copytruncate).
+
+### Validated end-to-end with a REAL multi-stage APT attack chain (win-ep)
+Ran a 5-stage chain (Discovery -> Credential Access -> Persistence -> Defense Evasion -> C2):
+- **15 unique detection rules fired across 13 MITRE techniques / 6 tactics.** Highlights: LSASS comsvcs dump (100311, T1003.001), Mimikatz (100312), SAM/SYSTEM/SECURITY hive dump (92026, T1003.002), browser theft (100313, T1555.003), executable dropped in malware folder (92213, T1105, L15), FodHelper UAC bypass (92055, T1548.002), Run-key + scheduled-task persistence (92302/92154), Base64 registry (92041), and DNS C2 (100306/100307, T1071.004).
+- **The DNS C2 detection auto-triggered containment:** 100306 fired -> integration -> n8n -> allowlist check (win-ep not protected) -> PATCH soar_blocklist -> apply. Confirmed `blocklist: ['10.10.10.20']` and `applied: True` — **win-ep isolated fully automatically, no manual step.** Ticket generated for the incident.
+- This is effectively the first full attack-chain measurement — the basis for the future Phase 8 Coverage Engine.
+
+### Cleanup / state
+- After the live test: removed win-ep from blocklist, disabled rule 12 (back to dry-run), reset circuit-breaker state. Confirmed clean.
+- win-ep artifacts (dumps, hives, run-key, scheduled task, disabled Defender) remain on win-ep (powered off, network-isolated); to be cleaned or rolled back to snapshot `pre-atomic-6a-validation` next time it boots.
+- Snapshots this session: pfSense `pre-rest-api-6b`; siem RAM change verified.
+
+### Commit
+- `8c3d40b` — `feat(soar): Phase 6-B — automated host isolation with safety controls + investigation tickets` (soar/scripts/soar-block.py, dns-pull.sh, c2-detect.py, cron-dns-pipeline; soar/pfsense-api/README.md; updated workflow export).
+
+### Remaining in 6-B (next session)
+- **TTL auto-unblock** (n8n Wait/schedule -> remove IP after N min -> apply).
+- **Cortex** (JVM; VirusTotal + AbuseIPDB analyzers, need free API keys) -> n8n enriches the ticket's enrichment placeholders on the destination -> stronger, evidence-based block decision.
+- **Domain/subdomain block** (DNS-level via Unbound/pfBlockerNG NXDOMAIN — separate path from firewall IP block; after Cortex, higher FP risk).
+- **TEMP egress rule on pfSense is still OPEN** (for Cortex image pulls) — disable it (back to default-deny) after the Cortex pulls.
 
 ---
 
