@@ -1,0 +1,2 @@
+# DNS C2 pipeline: pull fresh queries, then analyze — every minute
+* * * * * root /usr/local/bin/dns-pull.sh >> /var/log/dns-analyzer/pull.log 2>&1 && /usr/bin/python3 /opt/dns-analyzer/c2-detect.py >> /var/log/dns-analyzer/detect.log 2>&1

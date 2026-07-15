@@ -1,5 +1,5 @@
 {
-  "name": "Wazuh SOAR triage",
+  "name": "Wazuh SOAR triage_",
   "nodes": [
     {
       "parameters": {
@@ -56,6 +56,29 @@
         "assignments": {
           "assignments": [
             {
+              "id": "e3042e23-4d1b-4774-b68e-2386573e0377",
+              "name": "soar_action",
+              "value": "LOW_PRIORITY - logged, no action",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        416,
+        96
+      ],
+      "id": "298d4e40-d46a-43e0-8a6b-3de88f51dbce",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
               "id": "3abd6c63-d9e6-41c4-a6ff-7afd6a254126",
               "name": "soar_action",
               "value": "HIGH_PRIORITY - enrich + block (pfSense API in 6-B)",
@@ -78,16 +101,145 @@
         -96
       ],
       "id": "180344bb-0a97-45fa-afdb-54ae32f11277",
-      "name": "Edit Fields"
+      "name": "HIGH_PRIORITY"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract source IP from the Wazuh alert + allowlist safety check\nconst alert = $('Webhook').first().json.body;\n\n// pull src_ip from common Wazuh alert locations\nconst srcIp = alert?.data?.src_ip \n           || alert?.data?.srcip \n           || alert?.data?.win?.eventdata?.sourceIp \n           || null;\n\n// --- SAFETY: infrastructure allowlist (NEVER block these) ---\nconst ALLOWLIST = {\n  \"10.10.10.1\":  \"pfSense gateway\",\n  \"10.10.10.10\": \"siem (SIEM + n8n)\",\n  \"10.10.10.2\":  \"ThinkPad host\"\n};\n\nlet decision;\nif (!srcIp) {\n  decision = { action: \"skip\", reason: \"no_src_ip\", src_ip: null };\n} else if (ALLOWLIST[srcIp]) {\n  decision = { action: \"refused\", reason: \"allowlist\", src_ip: srcIp, detail: ALLOWLIST[srcIp] };\n} else {\n  decision = { action: \"allow_block\", reason: \"passed_safety\", src_ip: srcIp };\n}\n\nreturn [{\n  json: {\n    ...alert,\n    soar_decision: decision,\n    rule_id: alert?.rule?.id,\n    rule_level: alert?.rule?.level,\n    rule_desc: alert?.rule?.description,\n    mitre: alert?.rule?.mitre?.id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        -96
+      ],
+      "id": "af022c2b-6f30-4cbb-8f5c-9d4c989f04d7",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "431123da-b20f-4738-979a-6505162329b2",
+              "leftValue": "={{ $json.soar_decision.action}}",
+              "rightValue": "allow_block",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        832,
+        -96
+      ],
+      "id": "c01aa329-8820-43dc-8aab-14bae83001d2",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://10.10.10.1/api/v2/firewall/alias",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"id\": 7, \"address\": [\"{{ $json.soar_decision.src_ip }}\"] }",
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1040,
+        -176
+      ],
+      "id": "eb4cbcca-23bf-4f1b-a38f-a8fed923b9ea",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "sii0pFTZdTybhtMP",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://10.10.10.1/api/v2/firewall/apply",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type ",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1248,
+        -144
+      ],
+      "id": "d7596f10-c7ac-43a2-b943-1181ce981125",
+      "name": "HTTP Request1",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "sii0pFTZdTybhtMP",
+          "name": "Header Auth account"
+        }
+      }
     },
     {
       "parameters": {
         "assignments": {
           "assignments": [
             {
-              "id": "e3042e23-4d1b-4774-b68e-2386573e0377",
-              "name": "soar_action",
-              "value": "LOW_PRIORITY - logged, no action",
+              "id": "c52429dd-a827-4e0c-9ac9-2d19abbf7ff5",
+              "name": "final_action",
+              "value": "NO_BLOCK - refused by safety or no src_ip",
               "type": "string"
             }
           ]
@@ -97,11 +249,24 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        416,
-        96
+        1040,
+        0
       ],
-      "id": "298d4e40-d46a-43e0-8a6b-3de88f51dbce",
-      "name": "Edit Fields1"
+      "id": "ea5415e6-1890-45d2-8dff-d7e8938a972e",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n//  SOC Investigation Ticket Builder — professional, TheHive-ready\n//  Enrichment fields are placeholders, populated by Cortex in 6-B\n// ============================================================\nconst d = $('Code in JavaScript').first().json;\nconst now = new Date();\nconst pad = n => String(n).padStart(2, \"0\");\n\n// ---- severity + SLA mapping from Wazuh level ----\nconst lvl = d.rule_level || 0;\nlet severity, tlp, slaHours;\nif (lvl >= 13)      { severity = \"Critical\"; tlp = \"RED\";    slaHours = 1;  }\nelse if (lvl >= 10) { severity = \"High\";     tlp = \"AMBER\";  slaHours = 4;  }\nelse if (lvl >= 7)  { severity = \"Medium\";   tlp = \"GREEN\";  slaHours = 24; }\nelse                { severity = \"Low\";      tlp = \"WHITE\";  slaHours = 72; }\n\nconst slaDue = new Date(now.getTime() + slaHours * 3600 * 1000);\n\n// ---- identifiers ----\nconst dateKey = `${now.getUTCFullYear()}${pad(now.getUTCMonth()+1)}${pad(now.getUTCDate())}`;\nconst timeKey = `${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`;\nconst ticketKey = `SOC-${dateKey}-${timeKey}`;\n\n// ---- pull fields ----\nconst srcIp   = d.soar_decision?.src_ip || d.data?.src_ip || \"unknown\";\nconst dstDom  = d.parent_domain || d.data?.parent_domain || \"N/A\";\nconst qCount  = d.query_count || d.data?.query_count || \"N/A\";\nconst mitreArr= Array.isArray(d.mitre) ? d.mitre : (d.mitre ? [d.mitre] : []);\nconst mitre   = mitreArr.join(\", \") || \"N/A\";\nconst action  = d.soar_decision?.action || \"none\";\nconst reason  = d.soar_decision?.reason || \"N/A\";\n\n// ---- human summary ----\nconst summary = `[${severity}] ${d.rule_desc || \"Security alert\"} — host ${srcIp}`;\n\n// ---- contained? ----\nconst contained = action === \"allow_block\";\nconst actionText = contained\n  ? `Host ${srcIp} automatically isolated (added to pfSense soar_blocklist, firewall block applied).`\n  : `No automated block. Reason: ${reason}${reason === \"allowlist\" ? \" (protected infrastructure)\" : \"\"}.`;\n\n// ---- Markdown description (renders nicely in TheHive) ----\nconst description = `\n## Executive Summary\nA **${severity.toLowerCase()}**-severity detection fired on the network. ${d.rule_desc || \"\"}.\nAutomated containment: **${contained ? \"APPLIED\" : \"NOT APPLIED\"}**.\n\n## Detection Details\n| Field | Value |\n|---|---|\n| Rule | ${d.rule_id} — ${d.rule_desc} |\n| Wazuh Level | ${lvl} |\n| MITRE ATT&CK | ${mitre} |\n| Source Host | \\`${srcIp}\\` |\n| Destination | \\`${dstDom}\\` |\n| Observed Count | ${qCount} |\n| Detection Time | ${d.timestamp || now.toISOString()} |\n\n## Impact / Affected Assets\n- **Primary asset:** ${srcIp} (internal endpoint)\n- **Containment status:** ${contained ? \"Isolated\" : \"Active — review required\"}\n\n## Automated Response\n${actionText}\n`.trim();\n\n// ---- the full ticket object ----\nconst ticket = {\n  // === HEADER ===\n  ticket_key:   ticketKey,\n  summary:      summary,\n  type:         \"Security Incident\",\n  status:       \"Open\",\n  priority:     severity,\n  tlp:          tlp,\n  created_utc:  now.toISOString(),\n  reporter:     \"Wazuh SOAR (automated)\",\n  assignee:     \"unassigned\",\n  sla_due_utc:  slaDue.toISOString(),\n  sla_hours:    slaHours,\n  labels:       [...mitreArr, contained ? \"auto-contained\" : \"needs-review\",\n                 severity.toLowerCase(), \"network-detection\"],\n\n  // === DESCRIPTION (markdown) ===\n  description:  description,\n\n  // === MITRE ===\n  mitre: {\n    techniques: mitreArr,\n    tactic_hint: \"See ATT&CK mapping for kill-chain phase\"\n  },\n\n  // === OBSERVABLES (TheHive-style, ready for Cortex) ===\n  observables: [\n    { type: \"ip\",     value: srcIp,  role: \"source\",      ioc: false, note: \"internal endpoint\" },\n    { type: \"domain\", value: dstDom, role: \"destination\", ioc: true,  note: \"suspected C2 / beaconing target\" }\n  ],\n\n  // === TIMELINE ===\n  timeline: [\n    { time: d.timestamp || now.toISOString(), event: `Detection fired: ${d.rule_id} ${d.rule_desc}` },\n    { time: now.toISOString(),                event: `SOAR decision: ${action} (${reason})` },\n    { time: now.toISOString(),                event: contained ? `Containment applied: ${srcIp} isolated` : `No containment: ${reason}` }\n  ],\n\n  // === AUTOMATED RESPONSE ===\n  automated_response: {\n    decision:     action,\n    reason:       reason,\n    action_taken: actionText,\n    contained:    contained,\n    allowlist_protected: action === \"refused\" && reason === \"allowlist\"\n  },\n\n  // === ENRICHMENT (Cortex — populated in 6-B) ===\n  enrichment: {\n    status: \"pending\",\n    virustotal:  { domain: dstDom, verdict: null, malicious_count: null, checked: false },\n    abuseipdb:   { ip: srcIp,      score: null,   checked: false },\n    note: \"Awaiting Cortex analyzers (VirusTotal, AbuseIPDB) — Phase 6-B\"\n  },\n\n  // === INVESTIGATION TASKS (L1, MITRE-guided) ===\n  investigation_tasks: [\n    { id: 1, task: \"Verify source host identity & ownership\",              status: \"todo\", owner: \"L1\" },\n    { id: 2, task: \"Determine if activity is expected (baseline/whitelist)\", status: \"todo\", owner: \"L1\" },\n    { id: 3, task: \"Review Cortex enrichment verdicts on destination\",     status: \"todo\", owner: \"L1\" },\n    { id: 4, task: \"Pivot: search other hosts for same IOC/pattern\",       status: \"todo\", owner: \"L1\" },\n    { id: 5, task: \"Examine host process/parent chain at detection time\",  status: \"todo\", owner: \"L1\" },\n    { id: 6, task: \"Confirm containment effective (host reachability)\",    status: \"todo\", owner: \"L1\" },\n    { id: 7, task: \"Escalate to L2 or resolve with justification\",         status: \"todo\", owner: \"L1\" }\n  ],\n\n  // === ANALYST WORKSPACE ===\n  work_notes:  [],                    // analyst appends: {time, author, note}\n  disposition: \"PENDING\",             // TruePositive | FalsePositive | Escalated\n  resolution:  \"\",                    // final summary on close\n\n  // === REFERENCE ===\n  playbook: `PICERL for ${mitre}: Prepare → Identify → Contain (${contained ? \"auto-done\" : \"manual\"}) → Eradicate → Recover → Lessons`,\n  runbook_url: \"https://github.com/AJahmadcyber/homelab-mdr\"\n};\n\nreturn [{ json: ticket }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        -144
+      ],
+      "id": "3dcc56fa-203e-4517-adfa-27fbce406f5a",
+      "name": "Code in JavaScript1"
     }
   ],
   "pinData": {},
@@ -121,7 +286,7 @@
       "main": [
         [
           {
-            "node": "Edit Fields",
+            "node": "HIGH_PRIORITY",
             "type": "main",
             "index": 0
           }
@@ -129,6 +294,68 @@
         [
           {
             "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HIGH_PRIORITY": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
             "type": "main",
             "index": 0
           }
@@ -142,8 +369,9 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "8a3d702c-defe-4f0b-884e-f740456c74ec",
+  "versionId": "6563fe1a-afee-425a-bdce-3435eb2cc4d6",
   "meta": {
+    "templateCredsSetupCompleted": true,
     "instanceId": "943ca4efbad7f21362b90128b4ec06777c84838dfa6dbe6f8d0358d3c5bf3a20"
   },
   "nodeGroups": [],
