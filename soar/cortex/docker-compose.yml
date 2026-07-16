@@ -1,0 +1,42 @@
+version: "3.8"
+
+services:
+  elasticsearch:
+    image: elasticsearch:7.17.28
+    container_name: cortex-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"          # heap capped at 1GB
+      - thread_pool.search.queue_size=100000
+      - thread_pool.write.queue_size=10000
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile:  { soft: 65536, hard: 65536 }
+    mem_limit: 2g                            # hard container cap
+    volumes:
+      - cortex_es_data:/usr/share/elasticsearch/data
+    networks: [cortex-net]
+
+  cortex:
+    image: thehiveproject/cortex:latest
+    container_name: cortex
+    restart: unless-stopped
+    depends_on: [elasticsearch]
+    environment:
+      - 'JVM_OPTS=-Xms1g -Xmx1g'                # heap capped at 1GB
+    mem_limit: 1500m
+    ports:
+      - "0.0.0.0:9001:9001"                     # Cortex UI
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # to run analyzer containers
+      - /opt/cortex/jobs:/opt/cortex/jobs
+      - /opt/cortex/application.conf:/etc/cortex/application.conf:ro
+    networks: [cortex-net]
+
+volumes:
+  cortex_es_data:
+
+networks:
+  cortex-net:
