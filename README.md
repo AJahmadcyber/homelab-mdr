@@ -26,7 +26,7 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | 5 — Network IDS + DNS detection | Suricata on pfSense + Suricata→Wazuh pipeline, DNS tunneling + behavioral C2 beaconing | ✅ Implemented |
 | 6-A — SOAR pipeline | Wazuh → n8n integration, high-severity alert triage and routing | ✅ Implemented |
 | 6-B — Automated response | Host isolation via pfSense REST API + allowlist + circuit breaker + investigation tickets | ✅ Core implemented |
-| 6-C — Case management | TheHive 5 + Cassandra | ⏳ Roadmap |
+| 6-C — Case management + enrichment | TheHive 5 + Cassandra + Cortex (VirusTotal / AbuseIPDB / URLhaus), phishing email analysis | ⏳ Roadmap |
 | 7 — Threat simulation | Ransomware profile (T1486) run end to end against the stack | ⏳ Roadmap |
 
 ---
@@ -192,7 +192,7 @@ homelab-mdr/
 
 ## Roadmap
 
-- **Phase 6 — SOAR:** 6-A wired Wazuh → n8n triage; 6-B (core done) added automated host isolation via the pfSense REST API — gated by an infrastructure allowlist and a circuit breaker — plus professional investigation tickets, validated with a real multi-stage attack chain. Remaining in 6-B: block TTL (auto-unblock), Cortex enrichment (VirusTotal / AbuseIPDB) feeding the ticket, and DNS-level domain/subdomain blocking. 6-C adds TheHive 5 + Cassandra for case management, where the tickets land as investigable cases.
+- **Phase 6 — SOAR:** 6-A wired Wazuh → n8n triage; 6-B (core done) added automated host isolation via the pfSense REST API — gated by an infrastructure allowlist and a circuit breaker — plus professional investigation tickets, validated with a real multi-stage attack chain. Remaining in 6-B: block TTL (auto-unblock) and DNS-level domain/subdomain blocking. **6-C** deploys the StrangeBee stack together — TheHive 5 + Cassandra (case management, where tickets land as investigable cases) and **Cortex** with analyzers (VirusTotal / AbuseIPDB / URLhaus / EmailRep) that fill the ticket's enrichment fields — and then builds an **automated phishing-email analysis** pipeline on top (n8n pulls from a test mailbox → extracts observables → Cortex analyzers → TheHive 5 case), mirroring the #1 ticket type an L1 analyst triages.
 - **Phase 7 — Threat simulation:** a ransomware profile (T1486 and the surrounding chain) run against the full stack to validate detections end to end.
 - **Near-term detection extensions:** Shannon entropy and unique-subdomain cardinality on the DNS analyzer, JA3-based C2 hunting, index retention policy, and promoting high-confidence signatures to inline IPS via the SOAR path.
 
