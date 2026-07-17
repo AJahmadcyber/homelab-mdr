@@ -25,7 +25,7 @@ services:
     restart: unless-stopped
     depends_on: [elasticsearch]
     environment:
-      - 'JVM_OPTS=-Xms1g -Xmx1g'                # heap capped at 1GB
+      - 'JVM_OPTS=-Xms1g -Xmx1g -Dplay.temporaryFile.dir=/opt/cortex/jobs/tmp -Djava.io.tmpdir=/opt/cortex/jobs/tmp'                # heap capped at 1GB
     mem_limit: 1500m
     ports:
       - "0.0.0.0:9001:9001"                     # Cortex UI
