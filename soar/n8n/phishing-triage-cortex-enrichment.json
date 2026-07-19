@@ -1,0 +1,139 @@
+{
+  "name": "Phishing triage — Cortex enrichment",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n//  PHISHING TRIAGE ENGINE\n//  EmlParser result → artifacts → routed & batched enrichment\n//  → aggregated verdict + email metadata (ticket-ready)\n// ═══════════════════════════════════════════════════════════════════\nconst T0 = Date.now();\n\nconst CORTEX = 'http://10.10.10.10:9001';\nconst AUTH   = 'Bearer ' + '';   // mind the space after Bearer\nconst TLP    = 2;\n\nconst EMLPARSER_NAME = 'EmlParser_2_1';\n\nconst REGISTRY = {\n  AbuseIPDB:   { id: '7949e6404f6a75c2c8d2661dbf5656c8' },\n  VirusTotal:  { id: 'd911cd666346650b3d3f9b99998b0d42' },\n  URLhaus:     { id: '2983c453fe359bab2e3e0e67563d47d6' },\n  Pulsedive:   { id: 'a1ea4f51edd0e4cc86badab86cafb3ce' },\n  GoogleDNS:   { id: '1f039c328b0c7f1434a1c5e741d2e4d6' },\n  EmailRep:    { id: 'a42163133c48fa8c5f07617cb0b6bd8e' },\n  AbuseFinder: { id: '0647e7d7ef7d7806ac3c095070a18e28' },\n  Urlscan:     { id: '0d73227df4242d7811c574a0019c0817', slow: true },\n};\n\nconst ROUTING = {\n  ip:     ['AbuseIPDB', 'VirusTotal', 'Pulsedive'],\n  domain: ['VirusTotal', 'URLhaus', 'Pulsedive', 'GoogleDNS'],\n  fqdn:   ['VirusTotal', 'URLhaus', 'GoogleDNS'],\n  url:    ['VirusTotal', 'URLhaus', 'Urlscan'],\n  hash:   ['VirusTotal', 'URLhaus'],\n  mail:   ['EmailRep', 'AbuseFinder'],\n};\n\nconst CONCURRENCY             = 3;\nconst MAX_ANALYZERS_PER_OBS   = 4;\nconst INCLUDE_SLOW            = false;\nconst PER_ANALYZER_TIMEOUT_MS = 40000;\nconst EML_TIMEOUT_MS          = 60000;\nconst POLL_SCHEDULE_MS        = [800, 1200, 1500, 2000, 2500, 3000];\nconst POLL_FALLBACK_MS        = 3500;\n\nconst http  = this.helpers.httpRequest.bind(this);\nconst sleep = (ms) => new Promise(r => setTimeout(r, ms));\nconst jsonHeaders = { Authorization: AUTH, 'Content-Type': 'application/json', Accept: 'application/json' };\n\nconst LEVEL_RANK = { info: 0, safe: 1, suspicious: 2, malicious: 3 };\nconst RANK_LEVEL = ['info', 'safe', 'suspicious', 'malicious'];\n\nconst errText = (e) => {\n  const d = e && e.response && e.response.data;\n  if (d) return typeof d === 'string' ? d.slice(0, 300) : JSON.stringify(d).slice(0, 300);\n  return String((e && e.message) || e);\n};\n\nasync function jobStatus(id) {\n  const r = await http({ method: 'GET', url: `${CORTEX}/api/job/${id}`, headers: jsonHeaders, json: true });\n  return r.status;\n}\n\nasync function jobReport(id) {\n  const r = await http({ method: 'GET', url: `${CORTEX}/api/job/${id}/report`, headers: jsonHeaders, json: true });\n  let rep = r.report || {};\n  if (typeof rep === 'string') rep = JSON.parse(rep);\n  return rep;\n}\n\nasync function poll(id, budgetMs) {\n  const start = Date.now();\n  let i = 0;\n  while (Date.now() - start < budgetMs) {\n    try {\n      const s = await jobStatus(id);\n      if (s === 'Success' || s === 'Failure') return s;\n    } catch (e) { /* transient */ }\n    await sleep(POLL_SCHEDULE_MS[i] ?? POLL_FALLBACK_MS);\n    i++;\n  }\n  return 'Timeout';\n}\n\n// ── STEP 1: find the EmlParser job (input-shape independent) ───────\n// Prefer an id handed over by the upload node; otherwise ask Cortex\n// for its most recent EmlParser job — the one we just submitted.\nlet emlJobId = null;\ntry {\n  const inp = $input.first().json;\n  if (inp && typeof inp.id === 'string' && inp.id.length > 5) emlJobId = inp.id;\n} catch (e) { /* no usable input */ }\n\nif (!emlJobId) {\n  const recent = await http({ method: 'GET', url: `${CORTEX}/api/job?range=0-9`, headers: jsonHeaders, json: true });\n  const list = Array.isArray(recent) ? recent : [];\n  const hit = list.find(j => j.workerDefinitionId === EMLPARSER_NAME || j.workerName === EMLPARSER_NAME);\n  if (!hit) throw new Error('No recent EmlParser job found in Cortex — did the upload node run?');\n  emlJobId = hit.id;\n}\n\nconst emlStatus = await poll(emlJobId, EML_TIMEOUT_MS);\nif (emlStatus !== 'Success') throw new Error(`EmlParser did not complete (status: ${emlStatus}, job: ${emlJobId})`);\n\nconst emlReport = await jobReport(emlJobId);\n\n// ── STEP 2: email metadata + observables ───────────────────────────\nconst H     = (emlReport.full && emlReport.full.headers) || {};\nconst first = (v) => (Array.isArray(v) ? (v[0] || '') : (v || ''));\n\nconst email = {\n  subject:       first(H.subject),\n  from:          first(H.from),\n  to:            first(H.to),\n  reply_to:      first(H['reply-to']),\n  return_path:   first(H['return-path']),\n  date:          first(H.date),\n  received_hops: Array.isArray(H.received) ? H.received.length : 0,\n  attachments:   ((emlReport.full && emlReport.full.attachments) || []).length,\n  eml_job_id:    emlJobId,\n};\n\nconst OBSERVABLES = (emlReport.artifacts || []).map(a => ({\n  dataType: a.dataType,\n  data: a.data,\n  tags: a.tags || [],\n}));\n\n// ── STEP 3: plan (dedup + routing + cap) ───────────────────────────\nconst seen  = new Set();\nconst tasks = [];\nfor (const obs of OBSERVABLES) {\n  const key = `${obs.dataType}:${String(obs.data).toLowerCase()}`;\n  if (seen.has(key)) continue;\n  seen.add(key);\n\n  let route = ROUTING[obs.dataType] || [];\n  if (!INCLUDE_SLOW) route = route.filter(n => !(REGISTRY[n] && REGISTRY[n].slow));\n  route = route.filter(n => REGISTRY[n]).slice(0, MAX_ANALYZERS_PER_OBS);\n\n  for (const azName of route) tasks.push({ azName, obs });\n}\n\n// ── STEP 4: enrich one observable with one analyzer (isolated) ─────\nasync function enrichOne(azName, obs) {\n  const base = { analyzer: azName, obs: obs.data, dataType: obs.dataType, taxonomies: [], rank: 0 };\n  try {\n    const run = await http({\n      method: 'POST',\n      url: `${CORTEX}/api/analyzer/${REGISTRY[azName].id}/run`,\n      headers: jsonHeaders,\n      body: { dataType: obs.dataType, data: obs.data, tlp: TLP },\n      json: true,\n    });\n    const st = await poll(run.id, PER_ANALYZER_TIMEOUT_MS);\n    if (st !== 'Success') return { ...base, status: st };\n\n    const rep = await jobReport(run.id);\n    const tax = (rep.summary && rep.summary.taxonomies) || [];\n    let rank = 0;\n    for (const t of tax) rank = Math.max(rank, LEVEL_RANK[t.level] ?? 0);\n\n    return {\n      ...base,\n      status: 'Success',\n      rank,\n      taxonomies: tax.map(t => ({ level: t.level, ns: t.namespace, pred: t.predicate, val: t.value })),\n    };\n  } catch (e) {\n    return { ...base, status: 'Error', error: errText(e) };\n  }\n}\n\n// ── STEP 5: bounded-parallel execution ─────────────────────────────\nconst results = [];\nfor (let i = 0; i < tasks.length; i += CONCURRENCY) {\n  const batch   = tasks.slice(i, i + CONCURRENCY);\n  const settled = await Promise.allSettled(batch.map(t => enrichOne(t.azName, t.obs)));\n  for (let j = 0; j < settled.length; j++) {\n    const s = settled[j];\n    results.push(\n      s.status === 'fulfilled'\n        ? s.value\n        : {\n            analyzer: batch[j].azName, obs: batch[j].obs.data, dataType: batch[j].obs.dataType,\n            status: 'Error', error: String(s.reason), taxonomies: [], rank: 0,\n          }\n    );\n  }\n}\n\n// ── STEP 6: roll up into a single verdict ──────────────────────────\nconst byObservable = {};\nconst reasons = [];\nlet worst = 0, ran = 0, failed = 0;\n\nfor (const r of results) {\n  if (r.status === 'Success') ran++; else failed++;\n  worst = Math.max(worst, r.rank);\n\n  for (const t of r.taxonomies) {\n    if ((LEVEL_RANK[t.level] ?? 0) >= 2) reasons.push(`${r.obs} → ${t.ns}:${t.pred}=${t.val}`);\n  }\n\n  const o = byObservable[r.obs] = byObservable[r.obs] || { dataType: r.dataType, verdict: 'info', analyzers: {} };\n  o.analyzers[r.analyzer] = {\n    status: r.status,\n    level: RANK_LEVEL[r.rank],\n    taxonomies: r.taxonomies,\n    ...(r.error ? { error: r.error } : {}),\n  };\n  o.verdict = RANK_LEVEL[Math.max(LEVEL_RANK[o.verdict] ?? 0, r.rank)];\n}\n\nreturn [{\n  json: {\n    email,\n    verdict: RANK_LEVEL[worst],\n    verdict_reason: [...new Set(reasons)],\n    observable_count: OBSERVABLES.length,\n    jobs_planned: tasks.length,\n    analyzers_run: ran,\n    analyzers_failed: failed,\n    concurrency: CONCURRENCY,\n    observables: byObservable,\n    duration_ms: Date.now() - T0,\n    started_utc: new Date(T0).toISOString(),\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "e5735c1a-dc1e-4140-9b2e-963266c8d6a3",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "downloadAttachments": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "de3a71da-37d2-4ba6-a809-0ade71949a4a",
+      "name": "Email Trigger (IMAP)",
+      "credentials": {
+        "imap": {
+          "id": "36YQVtEGFgAC1UVP",
+          "name": "IMAP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://10.10.10.10:9001/api/analyzer/41355020917a6f8fbcdd0f91f5b86d69/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "data",
+              "inputDataFieldName": "attachment_0"
+            },
+            {
+              "name": "_json",
+              "value": "{\"dataType\":\"file\",\"tlp\":2,\"pap\":2}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "10f8a242-02bf-4239-b6e6-5a5f4744a4ac",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "k4MeRp6uuVhXhzWx",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n//  PHISHING SIGNAL SCORING\n//  Reads the raw email + Cortex verdict, applies reputation-independent\n//  detection signals (brand lookalike, auth failures, header mismatches,\n//  link deception, lure language), and produces an L1 disposition hint.\n// ═══════════════════════════════════════════════════════════════════\nconst T0 = Date.now();\n\nconst CORTEX = 'http://10.10.10.10:9001';\nconst AUTH   = 'Bearer ' + '';   // mind the space after Bearer\n\nconst BRANDS = [\n  'paypal','microsoft','office365','outlook','onedrive','sharepoint','google','gmail',\n  'apple','icloud','amazon','netflix','facebook','instagram','linkedin','whatsapp',\n  'dhl','fedex','ups','aramex','dropbox','adobe','docusign','zoom','binance','coinbase',\n  'wetransfer','booking','airbnb','steam','bankofamerica','hsbc','citibank',\n];\n\nconst URGENCY = [\n  'urgent','immediately','suspend','suspended','limited','locked','unusual activity',\n  'action required','verify your','confirm your','within 24 hours','final notice',\n  'unauthorized','will be closed','expire','expired','click here','update your',\n  'security alert','account has been',\n];\n\nconst CRED_PATH = [\n  'verify','login','signin','sign-in','secure','account','update','confirm',\n  'password','auth','recover','unlock','billing','validate','session',\n];\n\nconst RISKY_EXT = [\n  'exe','scr','js','jse','vbs','vbe','hta','wsf','lnk','iso','img','msi','bat','cmd','ps1',\n  'docm','xlsm','pptm','jar','html','htm','svg',\n];\n\nconst MULTI_TLD = [\n  'co.uk','org.uk','gov.uk','ac.uk','com.au','co.jp','com.br','co.in','com.tr',\n  'com.mx','co.za','com.sa','com.eg','com.jo','edu.jo','gov.jo','net.au','co.nz',\n];\n\n// ── helpers ────────────────────────────────────────────────────────\nconst http = this.helpers.httpRequest.bind(this);\nconst headers = { Authorization: AUTH, 'Content-Type': 'application/json', Accept: 'application/json' };\n\nfunction registrable(host) {\n  if (!host) return '';\n  const h = String(host).toLowerCase().replace(/^\\.+|\\.+$/g, '');\n  const parts = h.split('.');\n  if (parts.length < 2) return h;\n  const last2 = parts.slice(-2).join('.');\n  if (MULTI_TLD.includes(last2) && parts.length >= 3) return parts.slice(-3).join('.');\n  return last2;\n}\n\nfunction hostOfUrl(u) {\n  try {\n    const m = String(u).match(/^[a-z][a-z0-9+.-]*:\\/\\/([^/?#\\s]+)/i);\n    if (!m) return '';\n    return m[1].replace(/^[^@]*@/, '').replace(/:\\d+$/, '').toLowerCase();\n  } catch (e) { return ''; }\n}\n\nfunction domainOfAddress(addr) {\n  const m = String(addr || '').match(/@([A-Za-z0-9.-]+)/);\n  return m ? m[1].toLowerCase() : '';\n}\n\n// Collapse common homoglyph substitutions so paypa1 → paypal\nfunction deglyph(s) {\n  return String(s).toLowerCase()\n    .replace(/[0]/g, 'o').replace(/[1|!]/g, 'l').replace(/[3]/g, 'e')\n    .replace(/[4]/g, 'a').replace(/[5]/g, 's').replace(/[7]/g, 't')\n    .replace(/rn/g, 'm').replace(/vv/g, 'w')\n    .replace(/[^a-z]/g, '');\n}\n\nfunction levenshtein(a, b) {\n  const m = a.length, n = b.length;\n  if (!m) return n; if (!n) return m;\n  let prev = Array.from({ length: n + 1 }, (_, i) => i);\n  for (let i = 1; i <= m; i++) {\n    const cur = [i];\n    for (let j = 1; j <= n; j++) {\n      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));\n    }\n    prev = cur;\n  }\n  return prev[n];\n}\n\n// Returns the brand a domain is imitating, or null when it is the real thing\nfunction impersonatedBrand(host) {\n  const reg = registrable(host);\n  if (!reg) return null;\n  const label = reg.split('.')[0];\n  const norm  = deglyph(label);\n  const full  = deglyph(host);\n  for (const b of BRANDS) {\n    const legit = reg === `${b}.com` || reg.startsWith(`${b}.`) ;\n    if (legit) return null;\n    if (norm === b && label !== b) return b;                 // paypa1 → paypal\n    if (levenshtein(norm, b) <= 1 && Math.abs(norm.length - b.length) <= 1 && norm !== b) return b;\n    if (full.includes(b)) return b;                          // paypal-secure-login.tk\n  }\n  return null;\n}\n\n// ── input: enrichment result from the previous node ────────────────\nconst prev = $input.first().json;\nconst emlJobId = prev && prev.eml_job_id ? prev.eml_job_id : (prev.email && prev.email.eml_job_id);\nif (!emlJobId) throw new Error('No eml_job_id on the incoming item — run the enrichment node first.');\n\nconst rep = await http({ method: 'GET', url: `${CORTEX}/api/job/${emlJobId}/report`, headers, json: true });\nlet emlReport = rep.report || {};\nif (typeof emlReport === 'string') emlReport = JSON.parse(emlReport);\n\nconst full = emlReport.full || {};\nconst raw  = String(full.raw_email || '');\nconst H    = full.headers || {};\nconst one  = (v) => (Array.isArray(v) ? (v[0] || '') : (v || ''));\n\nconst fromRaw     = one(H.from);\nconst fromDomain  = domainOfAddress(fromRaw);\nconst replyTo     = one(H['reply-to']);\nconst returnPath  = one(H['return-path']);\nconst subject     = one(H.subject);\nconst displayName = (fromRaw.match(/^\\s*\"?([^\"<]+)\"?\\s*</) || [, ''])[1].trim();\n\nconst urls = (emlReport.artifacts || [])\n  .filter(a => a.dataType === 'url')\n  .map(a => a.data);\n\nconst attachments = (full.attachments || []).map(a => a.filename || a.name || '');\n\n// ── signals ────────────────────────────────────────────────────────\nconst signals = [];\nconst add = (id, weight, detail) => signals.push({ id, weight, detail });\n\n// 1. sender domain imitating a known brand\nconst senderBrand = impersonatedBrand(fromDomain);\nif (senderBrand) add('sender_brand_lookalike', 40,\n  `Sender domain \"${fromDomain}\" imitates \"${senderBrand}\"`);\n\n// 2. brand in display name but not in the actual domain\nfor (const b of BRANDS) {\n  if (deglyph(displayName).includes(b) && !registrable(fromDomain).includes(b)) {\n    add('display_name_brand_mismatch', 25,\n      `Display name claims \"${displayName}\" but domain is \"${fromDomain}\"`);\n    break;\n  }\n}\n\n// 3. SPF / DKIM / DMARC results parsed from the raw headers\nconst authLine = (raw.match(/^Authentication-Results:[\\s\\S]*?(?=\\r?\\n[A-Za-z-]+:)/mi) || [''])[0];\nif (authLine) {\n  const spf   = (authLine.match(/spf=(\\w+)/i)   || [, ''])[1].toLowerCase();\n  const dkim  = (authLine.match(/dkim=(\\w+)/i)  || [, ''])[1].toLowerCase();\n  const dmarc = (authLine.match(/dmarc=(\\w+)/i) || [, ''])[1].toLowerCase();\n  if (['fail','softfail','none'].includes(spf))  add('spf_not_pass', 20,  `SPF result: ${spf}`);\n  if (['fail','none'].includes(dkim))            add('dkim_not_pass', 15, `DKIM result: ${dkim}`);\n  if (['fail','none'].includes(dmarc))           add('dmarc_not_pass', 25, `DMARC result: ${dmarc}`);\n} else {\n  add('no_auth_results', 10, 'No Authentication-Results header present');\n}\n\n// 4. envelope / header mismatches\nconst rpDomain = domainOfAddress(returnPath);\nif (rpDomain && fromDomain && registrable(rpDomain) !== registrable(fromDomain)) {\n  add('return_path_mismatch', 15, `Return-Path (${rpDomain}) differs from From (${fromDomain})`);\n}\nconst rtDomain = domainOfAddress(replyTo);\nif (rtDomain && fromDomain && registrable(rtDomain) !== registrable(fromDomain)) {\n  add('reply_to_mismatch', 15, `Reply-To (${rtDomain}) differs from From (${fromDomain})`);\n}\n\n// 5. link deception — anchor text pointing somewhere else\nconst anchorRe = /<a\\s[^>]*href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>([\\s\\S]*?)<\\/a>/gi;\nlet m;\nwhile ((m = anchorRe.exec(raw)) !== null) {\n  const href = m[1];\n  const text = m[2].replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim();\n  const hrefHost = registrable(hostOfUrl(href));\n  const textHost = registrable(hostOfUrl(text) || (text.match(/\\b[a-z0-9.-]+\\.[a-z]{2,}\\b/i) || [''])[0]);\n  if (textHost && hrefHost && textHost !== hrefHost) {\n    add('anchor_text_mismatch', 25, `Link text shows \"${textHost}\" but points to \"${hrefHost}\"`);\n    break;\n  }\n  const tBrand = BRANDS.find(b => deglyph(text).includes(b));\n  if (tBrand && hrefHost && !hrefHost.includes(tBrand)) {\n    add('anchor_brand_mismatch', 25, `Link text mentions \"${tBrand}\" but points to \"${hrefHost}\"`);\n    break;\n  }\n}\n\n// 6. URL-level indicators\nlet credHit = false, ipHit = false, punyHit = false, offSiteHit = false, brandUrlHit = false;\nfor (const u of urls) {\n  const host = hostOfUrl(u);\n  const reg  = registrable(host);\n  const path = String(u).replace(/^[a-z]+:\\/\\/[^/]+/i, '').toLowerCase();\n\n  if (!credHit && CRED_PATH.some(k => path.includes(k))) {\n    add('credential_path', 15, `URL path suggests credential capture: ${u.slice(0, 90)}`); credHit = true;\n  }\n  if (!ipHit && /^\\d{1,3}(\\.\\d{1,3}){3}$/.test(host)) {\n    add('ip_literal_url', 30, `URL uses a bare IP address: ${host}`); ipHit = true;\n  }\n  if (!punyHit && host.includes('xn--')) {\n    add('punycode_url', 30, `Punycode (internationalised) domain: ${host}`); punyHit = true;\n  }\n  if (!brandUrlHit) {\n    const ub = impersonatedBrand(host);\n    if (ub) { add('url_brand_lookalike', 35, `Link domain \"${reg}\" imitates \"${ub}\"`); brandUrlHit = true; }\n  }\n  if (!offSiteHit && fromDomain && reg && reg !== registrable(fromDomain)) {\n    add('link_offsite_from_sender', 5, `Link host \"${reg}\" differs from sender domain`); offSiteHit = true;\n  }\n}\n\n// 7. lure language\nconst subjLower = subject.toLowerCase();\nconst bodyLower = raw.toLowerCase();\nconst subjHits  = URGENCY.filter(k => subjLower.includes(k));\nconst bodyHits  = URGENCY.filter(k => bodyLower.includes(k));\nif (subjHits.length) add('urgency_subject', 12, `Urgency language in subject: ${subjHits.slice(0, 3).join(', ')}`);\nelse if (bodyHits.length) add('urgency_body', 8, `Urgency language in body: ${bodyHits.slice(0, 3).join(', ')}`);\n\n// 8. attachments\nfor (const f of attachments) {\n  const ext = (String(f).split('.').pop() || '').toLowerCase();\n  if (RISKY_EXT.includes(ext)) { add('risky_attachment', 35, `Attachment with risky extension: ${f}`); break; }\n}\n\n// 9. the Cortex verdict itself\nconst cortexVerdict = prev.verdict || 'info';\nif (cortexVerdict === 'malicious')       add('cortex_malicious', 60, 'Threat intelligence flagged an observable as malicious');\nelse if (cortexVerdict === 'suspicious') add('cortex_suspicious', 30, 'Threat intelligence flagged an observable as suspicious');\n\n// ── final score ────────────────────────────────────────────────────\nconst score = signals.reduce((s, x) => s + x.weight, 0);\n\nlet risk, disposition_hint;\nif (score >= 70)      { risk = 'high';   disposition_hint = 'Likely True Positive — contain and escalate'; }\nelse if (score >= 40) { risk = 'medium'; disposition_hint = 'Suspicious — analyst review required'; }\nelse if (score >= 15) { risk = 'low';    disposition_hint = 'Weak indicators — review, likely benign'; }\nelse                  { risk = 'clean';  disposition_hint = 'Likely False Positive — close with note'; }\n\nreturn [{\n  json: {\n    ...prev,\n    scoring: {\n      score,\n      risk,\n      disposition_hint,\n      signal_count: signals.length,\n      signals: signals.sort((a, b) => b.weight - a.weight),\n      cortex_verdict: cortexVerdict,\n      scored_in_ms: Date.now() - T0,\n    },\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "ed1530dc-0859-4243-9fe0-d70758396c1a",
+      "name": "Code in JavaScript1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Email Trigger (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "f1f793cc-d2a4-4001-8fad-9402db6c2969",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "943ca4efbad7f21362b90128b4ec06777c84838dfa6dbe6f8d0358d3c5bf3a20"
+  },
+  "nodeGroups": [],
+  "id": "X1n3KYUe1d6mcS36",
+  "tags": []
+}
