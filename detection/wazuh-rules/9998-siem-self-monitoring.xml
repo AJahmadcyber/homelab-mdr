@@ -1,0 +1,65 @@
+<group name="audit,siem_self_monitoring,">
+
+  <!-- Base rule: match any audit event with our custom keys -->
+  <rule id="100200" level="7">
+    <if_sid>80700</if_sid>
+    <field name="audit.key">wazuh_config_change</field>
+    <description>SIEM Self-Monitoring: Wazuh configuration or binary modified [T1562.001 Impair Defenses]</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+  </rule>
+
+  <rule id="100201" level="10">
+    <if_sid>80700</if_sid>
+    <field name="audit.key">docker_socket_access</field>
+    <description>SIEM Self-Monitoring: Docker socket accessed [T1611 Escape to Host / T1610 Deploy Container]</description>
+    <mitre>
+      <id>T1611</id>
+      <id>T1610</id>
+    </mitre>
+  </rule>
+
+  <rule id="100202" level="9">
+    <if_sid>80700</if_sid>
+    <field name="audit.key">sudoers_change</field>
+    <description>SIEM Self-Monitoring: Sudoers file modified [T1548.003 Sudo and Sudo Caching]</description>
+    <mitre>
+      <id>T1548.003</id>
+    </mitre>
+  </rule>
+
+  <rule id="100203" level="9">
+    <if_sid>80700</if_sid>
+    <field name="audit.key">credential_change</field>
+    <description>SIEM Self-Monitoring: /etc/shadow modified [T1098 Account Manipulation]</description>
+    <mitre>
+      <id>T1098</id>
+    </mitre>
+  </rule>
+
+  <rule id="100204" level="8">
+    <if_sid>80700</if_sid>
+    <field name="audit.key">systemd_change</field>
+    <description>SIEM Self-Monitoring: systemd unit modified [T1543.002 Systemd Service]</description>
+    <mitre>
+      <id>T1543.002</id>
+    </mitre>
+  </rule>
+
+  <rule id="100205" level="8">
+    <if_sid>80700</if_sid>
+    <field name="audit.key">firewall_change</field>
+    <description>SIEM Self-Monitoring: Firewall config modified [T1562.004 Disable/Modify System Firewall]</description>
+    <mitre>
+      <id>T1562.004</id>
+    </mitre>
+  </rule>
+
+  <rule id="100206" level="0">
+    <if_sid>80710</if_sid>
+    <field name="audit.dev">^veth</field>
+    <description>Docker veth interface promiscuous mode - container lifecycle, not surveillance</description>
+    <group>audit_anom,docker,noise_suppression,</group>
+  </rule>
+</group>

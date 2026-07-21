@@ -1,0 +1,429 @@
+{
+  "name": "Wazuh SOAR triage_",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wazuh-alert",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "88f78a46-265e-4467-9411-628fb386b474",
+      "name": "Webhook",
+      "webhookId": "fcf3da7c-4086-419b-9cc1-76f6fa51b0ca"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "718e3e5e-60e8-4e78-b568-39ad123e0c3e",
+              "leftValue": "={{ $json.body.rule.level }}",
+              "rightValue": 10,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "id": "32fb7d5e-b291-460c-8691-dcf56efdea47",
+              "leftValue": "={{ ($json.body.rule.groups || []).join(',') }}",
+              "rightValue": "vulnerability-detector",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        208,
+        0
+      ],
+      "id": "f503d3d8-3a28-4627-a099-64801061fabf",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e3042e23-4d1b-4774-b68e-2386573e0377",
+              "name": "soar_action",
+              "value": "LOW_PRIORITY - logged, no action",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        416,
+        96
+      ],
+      "id": "298d4e40-d46a-43e0-8a6b-3de88f51dbce",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3abd6c63-d9e6-41c4-a6ff-7afd6a254126",
+              "name": "soar_action",
+              "value": "HIGH_PRIORITY - enrich + block (pfSense API in 6-B)",
+              "type": "string"
+            },
+            {
+              "id": "07f21403-b3c5-4d22-a853-651b1ddc800e",
+              "name": "priority",
+              "value": "high",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        416,
+        -96
+      ],
+      "id": "180344bb-0a97-45fa-afdb-54ae32f11277",
+      "name": "HIGH_PRIORITY"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "431123da-b20f-4738-979a-6505162329b2",
+              "leftValue": "={{ $json.soar_decision.action}}",
+              "rightValue": "allow_block",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        896,
+        -96
+      ],
+      "id": "c01aa329-8820-43dc-8aab-14bae83001d2",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://10.10.10.1/api/v2/firewall/alias",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"id\": 7, \"address\": [\"{{ $json.soar_decision.src_ip }}\"] }",
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1088,
+        -176
+      ],
+      "id": "eb4cbcca-23bf-4f1b-a38f-a8fed923b9ea",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "sii0pFTZdTybhtMP",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://10.10.10.1/api/v2/firewall/apply",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type ",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1312,
+        -160
+      ],
+      "id": "d7596f10-c7ac-43a2-b943-1181ce981125",
+      "name": "HTTP Request1",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "sii0pFTZdTybhtMP",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c52429dd-a827-4e0c-9ac9-2d19abbf7ff5",
+              "name": "final_action",
+              "value": "NO_BLOCK - refused by safety or no src_ip",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1104,
+        -16
+      ],
+      "id": "ea5415e6-1890-45d2-8dff-d7e8938a972e",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════\n//  CORTEX ENRICHMENT — SOAR path\n//  Alert observables (src_ip, parent_domain) → routed enrichment\n//  → shaped to fill the ticket's enrichment block\n// ═══════════════════════════════════════════════════════════════════\nconst T0 = Date.now();\n\nconst CORTEX = 'http://10.10.10.10:9001';\nconst AUTH   = 'Bearer ' + 'PASTE_FULL_MDR_ADMIN_KEY';  \nconst TLP    = 2;\n\nconst REGISTRY = {\n  AbuseIPDB:  { id: '7949e6404f6a75c2c8d2661dbf5656c8' },\n  VirusTotal: { id: 'd911cd666346650b3d3f9b99998b0d42' },\n  URLhaus:    { id: '2983c453fe359bab2e3e0e67563d47d6' },\n  Pulsedive:  { id: 'a1ea4f51edd0e4cc86badab86cafb3ce' },\n  GoogleDNS:  { id: '1f039c328b0c7f1434a1c5e741d2e4d6' },\n};\n\nconst ROUTING = {\n  ip:     ['AbuseIPDB', 'VirusTotal', 'Pulsedive'],\n  domain: ['VirusTotal', 'URLhaus', 'Pulsedive', 'GoogleDNS'],\n};\n\nconst CONCURRENCY             = 3;\nconst PER_ANALYZER_TIMEOUT_MS = 40000;\nconst POLL_SCHEDULE_MS        = [800, 1200, 1500, 2000, 2500, 3000];\nconst POLL_FALLBACK_MS        = 3500;\n\nconst http  = this.helpers.httpRequest.bind(this);\nconst sleep = (ms) => new Promise(r => setTimeout(r, ms));\nconst jsonHeaders = { Authorization: AUTH, 'Content-Type': 'application/json', Accept: 'application/json' };\n\nconst LEVEL_RANK = { info: 0, safe: 1, suspicious: 2, malicious: 3 };\nconst RANK_LEVEL = ['info', 'safe', 'suspicious', 'malicious'];\n\n// Some analyzers colour informational metrics with a severity level:\n// VT \"43 resolution(s)\", GoogleDNS record counts, EmailRep references.\n// Those are context, not verdicts — ranking them turns every lookup malicious.\nconst NON_VERDICT = [/resolution\\(s\\)/i, /record/i, /reference/i];\nconst bearsVerdict = (t) => {\n  const v = String(t.val !== undefined ? t.val : (t.value !== undefined ? t.value : ''));\n  return !NON_VERDICT.some(re => re.test(v));\n};\n\nasync function jobStatus(id) {\n  const r = await http({ method: 'GET', url: `${CORTEX}/api/job/${id}`, headers: jsonHeaders, json: true });\n  return r.status;\n}\n\nasync function jobReport(id) {\n  const r = await http({ method: 'GET', url: `${CORTEX}/api/job/${id}/report`, headers: jsonHeaders, json: true });\n  let rep = r.report || {};\n  if (typeof rep === 'string') rep = JSON.parse(rep);\n  return rep;\n}\n\nasync function poll(id, budgetMs) {\n  const start = Date.now();\n  let i = 0;\n  while (Date.now() - start < budgetMs) {\n    try {\n      const s = await jobStatus(id);\n      if (s === 'Success' || s === 'Failure') return s;\n    } catch (e) { /* transient */ }\n    await sleep(POLL_SCHEDULE_MS[i] ?? POLL_FALLBACK_MS);\n    i++;\n  }\n  return 'Timeout';\n}\n\n// ── observables from the alert ─────────────────────────────────────\nconst d = $('allowlist').first().json;\nconst srcIp  = (d.soar_decision && d.soar_decision.src_ip) || (d.data && d.data.src_ip) || null;\nconst domain = d.parent_domain || (d.data && d.data.parent_domain) || null;\n\n// RFC1918 / loopback: no external reputation source knows these — asking is noise\nconst isPrivate = (ip) => /^(10\\.|127\\.|192\\.168\\.|172\\.(1[6-9]|2\\d|3[01])\\.)/.test(String(ip || ''));\n\nconst OBSERVABLES = [];\nconst skipped = [];\nif (srcIp) {\n  if (isPrivate(srcIp)) skipped.push({ observable: srcIp, reason: 'internal address — no external reputation applies' });\n  else OBSERVABLES.push({ dataType: 'ip', data: srcIp });\n}\nif (domain) OBSERVABLES.push({ dataType: 'domain', data: domain });\n\n// ── plan ───────────────────────────────────────────────────────────\nconst tasks = [];\nfor (const obs of OBSERVABLES) {\n  for (const az of (ROUTING[obs.dataType] || [])) {\n    if (REGISTRY[az]) tasks.push({ azName: az, obs });\n  }\n}\n\n// ── enrich one observable with one analyzer (isolated) ─────────────\nasync function enrichOne(azName, obs) {\n  const base = { analyzer: azName, obs: obs.data, dataType: obs.dataType, taxonomies: [], rank: 0 };\n  try {\n    const run = await http({\n      method: 'POST',\n      url: `${CORTEX}/api/analyzer/${REGISTRY[azName].id}/run`,\n      headers: jsonHeaders,\n      body: { dataType: obs.dataType, data: obs.data, tlp: TLP },\n      json: true,\n    });\n    const st = await poll(run.id, PER_ANALYZER_TIMEOUT_MS);\n    if (st !== 'Success') return { ...base, status: st };\n\n    const rep = await jobReport(run.id);\n    const tax = (rep.summary && rep.summary.taxonomies) || [];\n\n    let rank = 0;\n    for (const t of tax) {\n      if (bearsVerdict(t)) rank = Math.max(rank, LEVEL_RANK[t.level] ?? 0);\n    }\n\n    return {\n      ...base,\n      status: 'Success',\n      rank,\n      taxonomies: tax.map(t => ({ level: t.level, ns: t.namespace, pred: t.predicate, val: t.value })),\n    };\n  } catch (e) {\n    return { ...base, status: 'Error', error: String((e && e.message) || e).slice(0, 200) };\n  }\n}\n\n// ── bounded-parallel execution ─────────────────────────────────────\nconst results = [];\nfor (let i = 0; i < tasks.length; i += CONCURRENCY) {\n  const batch   = tasks.slice(i, i + CONCURRENCY);\n  const settled = await Promise.allSettled(batch.map(t => enrichOne(t.azName, t.obs)));\n  for (let j = 0; j < settled.length; j++) {\n    const s = settled[j];\n    results.push(\n      s.status === 'fulfilled'\n        ? s.value\n        : {\n            analyzer: batch[j].azName, obs: batch[j].obs.data, dataType: batch[j].obs.dataType,\n            status: 'Error', error: String(s.reason), taxonomies: [], rank: 0,\n          }\n    );\n  }\n}\n\n// ── roll up ────────────────────────────────────────────────────────\nconst byObservable = {};\nconst reasons = [];\nlet worst = 0, ran = 0, failed = 0;\n\nfor (const r of results) {\n  if (r.status === 'Success') ran++; else failed++;\n  worst = Math.max(worst, r.rank);\n\n  for (const t of r.taxonomies) {\n    if (bearsVerdict(t) && (LEVEL_RANK[t.level] ?? 0) >= 2) {\n      reasons.push(`${r.obs} → ${t.ns}:${t.pred}=${t.val}`);\n    }\n  }\n\n  const o = byObservable[r.obs] = byObservable[r.obs] || { dataType: r.dataType, verdict: 'info', analyzers: {} };\n  o.analyzers[r.analyzer] = {\n    status: r.status,\n    level: RANK_LEVEL[r.rank],\n    taxonomies: r.taxonomies,\n    ...(r.error ? { error: r.error } : {}),\n  };\n  o.verdict = RANK_LEVEL[Math.max(LEVEL_RANK[o.verdict] ?? 0, r.rank)];\n}\n\n// ── headline fields for the ticket ─────────────────────────────────\nconst findTax = (obsVal, ns, predMatch) => {\n  const o = byObservable[obsVal];\n  if (!o) return null;\n  for (const az of Object.values(o.analyzers)) {\n    for (const t of az.taxonomies) {\n      if (t.ns === ns && (!predMatch || t.pred === predMatch)) return t;\n    }\n  }\n  return null;\n};\n\nconst vtTax  = domain ? findTax(domain, 'VT', 'GetReport') : null;\nconst vtHits = vtTax && /^\\d+\\/\\d+$/.test(String(vtTax.val)) ? String(vtTax.val) : null;\nconst abTax  = (srcIp && !isPrivate(srcIp)) ? findTax(srcIp, 'AbuseIPDB', 'Score') : null;\n\nreturn [{\n  json: {\n    ...d,\n    cortex: {\n      status: tasks.length ? 'completed' : 'skipped',\n      verdict: RANK_LEVEL[worst],\n      verdict_reason: [...new Set(reasons)],\n      virustotal: {\n        domain: domain || null,\n        verdict: domain ? ((byObservable[domain] && byObservable[domain].verdict) || 'unknown') : null,\n        detections: vtHits,\n        checked: !!vtTax,\n      },\n      abuseipdb: {\n        ip: srcIp || null,\n        score: abTax ? abTax.val : null,\n        checked: !!abTax,\n        note: (srcIp && isPrivate(srcIp)) ? 'internal address — not submitted to external reputation' : undefined,\n      },\n      observables: byObservable,\n      skipped,\n      analyzers_run: ran,\n      analyzers_failed: failed,\n      duration_ms: Date.now() - T0,\n    },\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        752,
+        -96
+      ],
+      "id": "dd124f9b-ba10-4f3e-b97e-4bcf2e666f22",
+      "name": "Cortex enrichment"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n//  SOC Investigation Ticket Builder\n//  Classifies the detection by ATT&CK tactic, then derives the\n//  priority, the investigation plan and the playbook from it.\n//  Every alert produces a ticket — containment status is a field,\n//  not a precondition.\n// ============================================================\nconst d   = $('allowlist').first().json;\nconst enr = (() => { try { return ($('Cortex enrichment').first().json || {}).cortex || null; } catch (e) { return null; } })();\n\nconst now = new Date();\nconst pad = n => String(n).padStart(2, \"0\");\n\n// ---- MITRE technique → tactic + investigation profile ----\nconst TECHNIQUES = {\n  'T1003.001': { name: 'LSASS Memory Dump',              tactic: 'Credential Access',  weight: 3 },\n  'T1027':     { name: 'Obfuscated Files or Information',tactic: 'Defense Evasion',    weight: 2 },\n  'T1046':     { name: 'Network Service Discovery',      tactic: 'Discovery',          weight: 1 },\n  'T1048':     { name: 'Exfiltration Over Alt Protocol', tactic: 'Exfiltration',       weight: 3 },\n  'T1059.001': { name: 'PowerShell Execution',           tactic: 'Execution',          weight: 2 },\n  'T1071.004': { name: 'DNS Application Layer Protocol', tactic: 'Command and Control', weight: 3 },\n  'T1098':     { name: 'Account Manipulation',           tactic: 'Persistence',        weight: 2 },\n  'T1105':     { name: 'Ingress Tool Transfer',          tactic: 'Command and Control', weight: 2 },\n  'T1539':     { name: 'Steal Web Session Cookie',       tactic: 'Credential Access',  weight: 3 },\n  'T1543.002': { name: 'Create or Modify System Service',tactic: 'Persistence',        weight: 2 },\n  'T1548.003': { name: 'Sudo and Sudo Caching Abuse',    tactic: 'Privilege Escalation', weight: 2 },\n  'T1555.003': { name: 'Credentials from Web Browsers',  tactic: 'Credential Access',  weight: 3 },\n  'T1562.001': { name: 'Disable or Modify Tools',        tactic: 'Defense Evasion',    weight: 3 },\n  'T1562.004': { name: 'Disable or Modify System Firewall', tactic: 'Defense Evasion', weight: 3 },\n  'T1610':     { name: 'Deploy Container',               tactic: 'Execution',          weight: 2 },\n  'T1611':     { name: 'Escape to Host',                 tactic: 'Privilege Escalation', weight: 3 },\n};\n\n// ---- per-tactic investigation plan (what an L1 actually does) ----\nconst PLAYBOOKS = {\n  'Credential Access': {\n    focus: 'Determine whether credentials were actually obtained, and which identities are now untrusted.',\n    tasks: [\n      'Identify the accessing process and its full parent chain',\n      'Establish whether the access succeeded or was blocked by protections',\n      'Locate any dump/output artefact written to disk and preserve it',\n      'List every account whose credentials were resident on the host',\n      'Hunt for the same technique across other endpoints',\n      'Check for authentication using the exposed accounts after the event',\n    ],\n    containment: 'Force password reset for exposed accounts and invalidate active sessions.',\n  },\n  'Command and Control': {\n    focus: 'Confirm the channel is adversary-controlled and identify what the host sent out.',\n    tasks: [\n      'Review the beaconing pattern: interval, jitter, and total volume',\n      'Resolve the destination and review its registration age and hosting',\n      'Correlate with the process that initiated the connections',\n      'Search for the same destination across all other hosts',\n      'Assess whether data left the environment over this channel',\n      'Verify containment stopped the traffic',\n    ],\n    containment: 'Isolate the host and block the destination at the perimeter.',\n  },\n  'Exfiltration': {\n    focus: 'Establish what data left, over which channel, and to whom.',\n    tasks: [\n      'Quantify the volume and duration of the outbound activity',\n      'Identify the source process and the files it accessed',\n      'Determine the destination owner and infrastructure',\n      'Classify the sensitivity of the data involved',\n      'Preserve evidence for potential disclosure obligations',\n    ],\n    containment: 'Cut the channel and preserve evidence before remediation.',\n  },\n  'Defense Evasion': {\n    focus: 'Treat as an active intrusion — an adversary disabling controls is preparing further action.',\n    tasks: [\n      'Identify what security control was disabled or modified, and by which account',\n      'Establish whether the change was authorised (change records, admin activity)',\n      'Reconstruct activity in the window while the control was down',\n      'Re-enable the control and confirm it is reporting',\n      'Hunt for follow-on activity that the gap may have hidden',\n    ],\n    containment: 'Restore the control and treat the blind window as unmonitored.',\n  },\n  'Privilege Escalation': {\n    focus: 'Determine whether elevated access was obtained and what it was used for.',\n    tasks: [\n      'Identify the escalation mechanism and whether it succeeded',\n      'Enumerate actions taken under elevated context afterwards',\n      'Check for new accounts, services or scheduled tasks created',\n      'Assess whether the mechanism affects other hosts',\n    ],\n    containment: 'Revoke elevated access and remediate the escalation path.',\n  },\n  'Persistence': {\n    focus: 'Find every foothold — persistence is rarely established only once.',\n    tasks: [\n      'Document the persistence mechanism and its exact configuration',\n      'Identify the account and process that created it',\n      'Enumerate other persistence locations on the host',\n      'Establish the original access vector that preceded it',\n      'Remove all footholds before restoring the host',\n    ],\n    containment: 'Remove every mechanism found — partial removal invites re-entry.',\n  },\n  'Execution': {\n    focus: 'Understand what ran, how it was launched, and what it did.',\n    tasks: [\n      'Recover the full command line and decode any obfuscation',\n      'Trace the parent process to the original delivery vector',\n      'Identify files written or network connections opened',\n      'Determine whether execution is expected for this host role',\n    ],\n    containment: 'Terminate the process tree and quarantine artefacts.',\n  },\n  'Discovery': {\n    focus: 'Usually reconnaissance preceding a further move — establish scope and intent.',\n    tasks: [\n      'Determine what was enumerated and how broadly',\n      'Identify whether the source is a legitimate scanning tool',\n      'Look for follow-on activity against discovered targets',\n      'Confirm whether the host is authorised to scan',\n    ],\n    containment: 'Usually monitoring rather than blocking, unless the source is untrusted.',\n  },\n};\n\nconst GENERIC_PLAYBOOK = {\n  focus: 'Establish what happened, whether it is expected, and whether it spread.',\n  tasks: [\n    'Verify the source host identity and its owner',\n    'Determine whether the activity is expected for this host',\n    'Review enrichment verdicts on the observables',\n    'Pivot: search other hosts for the same pattern',\n    'Escalate to L2 or resolve with justification',\n  ],\n  containment: 'Assess case by case.',\n};\n\n// ---- classify ----\nconst mitreArr = Array.isArray(d.mitre) ? d.mitre : (d.mitre ? [d.mitre] : []);\nconst known    = mitreArr.map(t => TECHNIQUES[t]).filter(Boolean);\nconst primary  = known.sort((a, b) => b.weight - a.weight)[0] || null;\nconst tactic   = primary ? primary.tactic : 'Uncategorised';\nconst playbook = PLAYBOOKS[tactic] || GENERIC_PLAYBOOK;\n\n// ---- severity: rule level, raised by tactic weight and threat intel ----\nconst lvl = d.rule_level || 0;\nlet base = lvl >= 13 ? 3 : lvl >= 10 ? 2 : lvl >= 7 ? 1 : 0;\nif (primary && primary.weight === 3) base = Math.min(3, base + 1);\nif (enr && enr.verdict === 'malicious') base = 3;\nelse if (enr && enr.verdict === 'suspicious') base = Math.min(3, base + 1);\n\nconst SEV = [\n  { name: 'Low',      tlp: 'WHITE', sla: 72 },\n  { name: 'Medium',   tlp: 'GREEN', sla: 24 },\n  { name: 'High',     tlp: 'AMBER', sla: 4  },\n  { name: 'Critical', tlp: 'RED',   sla: 1  },\n][base];\n\nconst slaDue = new Date(now.getTime() + SEV.sla * 3600 * 1000);\n\n// ---- identifiers ----\nconst dateKey   = `${now.getUTCFullYear()}${pad(now.getUTCMonth()+1)}${pad(now.getUTCDate())}`;\nconst timeKey   = `${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`;\nconst ticketKey = `SOC-${dateKey}-${timeKey}`;\n\n// ---- fields ----\nconst srcIp  = (d.soar_decision && d.soar_decision.src_ip) || (d.data && d.data.src_ip) || 'unknown';\nconst dstDom = d.parent_domain || (d.data && d.data.parent_domain) || null;\nconst qCount = d.query_count || (d.data && d.data.query_count) || null;\nconst action = (d.soar_decision && d.soar_decision.action) || 'none';\nconst reason = (d.soar_decision && d.soar_decision.reason) || 'n/a';\n\nconst contained = action === 'allow_block';\nconst CONTAINMENT_NOTE = {\n  allow_block: `Host ${srcIp} isolated automatically (added to pfSense soar_blocklist).`,\n  refused:     `No automated containment — ${srcIp} is protected infrastructure. Manual assessment required before any action.`,\n  skip:        `No automated containment — the alert carried no source address to act on.`,\n  none:        `No containment attempted.`,\n};\nconst actionText = CONTAINMENT_NOTE[action] || CONTAINMENT_NOTE.none;\n\n// ---- threat intelligence summary line ----\nconst tiLine = !enr ? 'Enrichment unavailable.'\n  : enr.status === 'skipped' ? 'No external observables to enrich.'\n  : enr.verdict === 'malicious' ? `Threat intelligence flags an observable as malicious: ${(enr.verdict_reason || []).join('; ')}`\n  : enr.verdict === 'suspicious' ? `Threat intelligence raised suspicion: ${(enr.verdict_reason || []).join('; ')}`\n  : 'No adverse threat-intelligence findings on the observables.';\n\n// ---- description ----\nconst description = `\n## Assessment\n**${tactic}** — ${primary ? primary.name : (d.rule_desc || 'uncategorised activity')}.\n${playbook.focus}\n\nContainment: **${contained ? 'APPLIED' : 'NOT APPLIED'}**. ${tiLine}\n\n## Detection\n| Field | Value |\n|---|---|\n| Rule | ${d.rule_id} — ${d.rule_desc} |\n| Wazuh level | ${lvl} |\n| Tactic | ${tactic} |\n| Technique | ${mitreArr.join(', ') || 'n/a'} |\n| Source host | \\`${srcIp}\\` |\n${dstDom ? `| Destination | \\`${dstDom}\\` |\\n` : ''}${qCount ? `| Observed count | ${qCount} |\\n` : ''}| Detected | ${d.timestamp || now.toISOString()} |\n\n## Response taken\n${actionText}\n\n## Recommended containment for this tactic\n${playbook.containment}\n`.trim();\n\n// ---- observables ----\nconst observables = [\n  { type: 'ip', value: srcIp, role: 'source', ioc: false, note: 'internal endpoint' },\n];\nif (dstDom) {\n  observables.push({\n    type: 'domain', value: dstDom, role: 'destination',\n    ioc: !!(enr && (enr.verdict === 'malicious' || enr.verdict === 'suspicious')),\n    note: enr && enr.virustotal && enr.virustotal.detections\n      ? `VirusTotal: ${enr.virustotal.detections}` : 'no enrichment data',\n  });\n}\n\n// ---- ticket ----\nconst ticket = {\n  ticket_key:  ticketKey,\n  summary:     `[${SEV.name}] ${tactic}: ${primary ? primary.name : (d.rule_desc || 'Security alert')} on ${srcIp}`,\n  type:        'Security Incident',\n  status:      'Open',\n  priority:    SEV.name,\n  tlp:         SEV.tlp,\n  created_utc: now.toISOString(),\n  reporter:    'Wazuh SOAR (automated)',\n  assignee:    'unassigned',\n  sla_due_utc: slaDue.toISOString(),\n  sla_hours:   SEV.sla,\n\n  classification: {\n    tactic,\n    techniques: mitreArr,\n    technique_names: known.map(k => k.name),\n    confidence: known.length ? 'mapped' : 'unmapped — rule carries no known technique',\n  },\n\n  labels: [\n    ...mitreArr,\n    tactic.toLowerCase().replace(/\\s+/g, '-'),\n    SEV.name.toLowerCase(),\n    contained ? 'auto-contained' : 'not-contained',\n    ...(enr && enr.verdict && enr.verdict !== 'info' ? [`ti-${enr.verdict}`] : []),\n  ],\n\n  description,\n  observables,\n\n  timeline: [\n    { time: d.timestamp || now.toISOString(), event: `Detection: ${d.rule_id} — ${d.rule_desc}` },\n    { time: now.toISOString(), event: `Classified as ${tactic}` },\n    { time: now.toISOString(), event: `SOAR decision: ${action} (${reason})` },\n    ...(enr && enr.status === 'completed'\n      ? [{ time: now.toISOString(), event: `Enrichment complete — verdict ${enr.verdict}` }] : []),\n  ],\n\n  automated_response: {\n    decision: action,\n    reason,\n    action_taken: actionText,\n    contained,\n    allowlist_protected: action === 'refused' && reason === 'allowlist',\n  },\n\n  enrichment: enr ? {\n    status: enr.status,\n    verdict: enr.verdict,\n    reasons: enr.verdict_reason,\n    virustotal: enr.virustotal,\n    abuseipdb: enr.abuseipdb,\n    observables: enr.observables,\n    skipped: enr.skipped,\n    analyzers: { run: enr.analyzers_run, failed: enr.analyzers_failed },\n    took_ms: enr.duration_ms,\n  } : { status: 'unavailable', note: 'No enrichment ran for this alert' },\n\ninvestigation_tasks: (\n    action === 'refused'\n      ? ['Assess impact on the protected asset before any containment decision',\n         'Escalate to L2 — containment on infrastructure requires authorisation',\n         ...playbook.tasks]\n      : action === 'skip'\n        ? ['Identify the affected host from the raw alert — no source address was present',\n           ...playbook.tasks]\n        : playbook.tasks\n  ).map((t, i) => ({ id: i + 1, task: t, status: 'todo', owner: 'L1' })),\n\n  work_notes: [],\n  disposition: 'PENDING',\n  resolution: '',\n\n  playbook: `PICERL — ${tactic}: Prepare → Identify → Contain (${contained ? 'automated' : 'manual required'}) → Eradicate → Recover → Lessons`,\n  runbook_url: 'https://github.com/AJahmadcyber/homelab-mdr',\n};\n\nreturn [{ json: ticket }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1616,
+        -16
+      ],
+      "id": "3dcc56fa-203e-4517-adfa-27fbce406f5a",
+      "name": "SOC Investigation Ticket"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract source IP from the Wazuh alert + allowlist safety check\nconst alert = $('Webhook').first().json.body;\n\n// pull src_ip from common Wazuh alert locations\nconst srcIp = alert?.data?.src_ip \n           || alert?.data?.srcip \n           || alert?.data?.win?.eventdata?.sourceIp \n           || null;\n\n// --- SAFETY: infrastructure allowlist (NEVER block these) ---\nconst ALLOWLIST = {\n  \"10.10.10.1\":  \"pfSense gateway\",\n  \"10.10.10.10\": \"siem (SIEM + n8n)\",\n  \"10.10.10.2\":  \"ThinkPad host\"\n};\n\nlet decision;\nif (!srcIp) {\n  decision = { action: \"skip\", reason: \"no_src_ip\", src_ip: null };\n} else if (ALLOWLIST[srcIp]) {\n  decision = { action: \"refused\", reason: \"allowlist\", src_ip: srcIp, detail: ALLOWLIST[srcIp] };\n} else {\n  decision = { action: \"allow_block\", reason: \"passed_safety\", src_ip: srcIp };\n}\n\nreturn [{\n  json: {\n    ...alert,\n    soar_decision: decision,\n    rule_id: alert?.rule?.id,\n    rule_level: alert?.rule?.level,\n    rule_desc: alert?.rule?.description,\n    mitre: alert?.rule?.mitre?.id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        -96
+      ],
+      "id": "af022c2b-6f30-4cbb-8f5c-9d4c989f04d7",
+      "name": "allowlist"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "HIGH_PRIORITY",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HIGH_PRIORITY": {
+      "main": [
+        [
+          {
+            "node": "allowlist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "SOC Investigation Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cortex enrichment": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "allowlist": {
+      "main": [
+        [
+          {
+            "node": "Cortex enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        []
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "SOC Investigation Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "83e2a3da-4f2b-43e5-bd2a-b8cbef135084",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "943ca4efbad7f21362b90128b4ec06777c84838dfa6dbe6f8d0358d3c5bf3a20"
+  },
+  "nodeGroups": [],
+  "id": "v3K5XG32n60QDNg0",
+  "tags": []
+}
