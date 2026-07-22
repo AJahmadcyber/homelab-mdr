@@ -1,0 +1,20 @@
+services:
+  thehive:
+    image: strangebee/thehive:5.4
+    container_name: thehive
+    restart: unless-stopped
+    entrypoint: ["/opt/thehive/bin/thehive"]
+    command: ["-Dconfig.file=/etc/thehive/application.conf", "-J-Xms1g", "-J-Xmx1g"]
+    mem_limit: 1500m
+    ports:
+      - "0.0.0.0:9000:9000"
+    volumes:
+      - thehive_db:/opt/thp/thehive/db
+      - thehive_index:/opt/thp/thehive/index
+      - thehive_data:/opt/thp/thehive/data
+      - /opt/thehive/application.conf:/etc/thehive/application.conf:ro
+
+volumes:
+  thehive_db:
+  thehive_index:
+  thehive_data:
