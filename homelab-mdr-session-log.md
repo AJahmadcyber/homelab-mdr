@@ -389,3 +389,40 @@ pfSense:
   /var/log/suricata/suricata_em14846/eve.json             # EVE output (alerts + dns)
   /root/.ssh/id_ed25519_pfsense                           # collector key
 ```
+
+---
+
+## Session — 2026-07-27 — TheHive 5 operational + Community license + self-inflicted incident
+
+**Phase 6-C functionally COMPLETE.** TheHive 5.4 up, both ticket streams land in one L1 queue, Community license active (valid to 2027-07-26), disposition-tracking loop live.
+
+### Delivered
+- TheHive 5.4 local mode (BerkeleyDB + Lucene, no Cassandra). Fix: named volumes born root-owned → `chown -R 1000:1000` before first start.
+- Cortex RAM tuning committed: 768m heaps, mem_limits 1.5g/1.2g (empirical — probe caught ES sitting at 88% of proposed limit before applying).
+- RAM decision: NO siem RAM increase. Host Available was 572MB; VirtualBox reserves guest RAM kernel-side (invisible to Working Set). Phase 7 constraint = host, not siem-internal. Operational rule: close Chrome before booting win-ep for attack tests.
+- Community license: quota is exact (2 users / 1 org / 1 Cortex / 1 MISP). svc-n8n MUST be type Service (does not consume a seat). IMAP Configs 0/0 in Community → validates our decision to build phishing intake in n8n, not TheHive email intake.
+- n8n → TheHive: Alert Builder + Create Alert nodes on both workflows via svc-n8n. Alerts carry ATT&CK tags, rule-id tag, L1 checklist, reputation-vs-signal verdict.
+- Case template `SOAR Investigation (L1)` + Disposition custom field (string: TP | FP | Escalated | Benign TP). Feedback loop is live from first ticket.
+- Degraded phishing branch: If on `{{ Object.keys($binary||{}).length }} > 0` → full .eml path (true) vs body-only path tagged `analysis:degraded` (false). No reported email breaks the pipeline now.
+- Urlscan = manual on-demand from TheHive (not auto), by choice: keeps tickets fast + avoids public-scan leaking internal URLs.
+
+### Lessons (three, all portfolio-grade)
+1. **Clock incident.** VMs restored from saved state froze at Jul 22; on cold boot the clock was 3.5 days behind. TheHive rejected a VALID Community license as "expired" (license window started after the frozen clock). `timedatectl` said "synchronized: yes" while 3.5 days off — a fault that lied about itself. Root cause: saved-state resume + no LAN time source (pfSense default-deny egress silently killed NTP). Fix: cold boot + siem→pfSense NTP (`timesyncd NTP=10.10.10.1`). **Rule: SIEM always cold-boots; verify time empirically after every boot.**
+2. **Self-inflicted feedback loop (DNS layer).** First full cold boot of the stack (all prior sessions were saved-state) + backlog flush + clock jump → c2-detect rate logic fired a one-time burst of 38 T1071.004 alerts (rules 100306/100307) on OUR OWN enrichment infra (ghcr.io, abuse.ch, pulsedive.com). SOAR (still active) turned them into 42 junk TheHive tickets + stuck Cortex jobs + 40 container corpses. **Diagnosis was empirical, not assumed:** measuring job ages (76466→76507s, no new young jobs) proved they were STUCK not multiplying; by-hour alert count proved the burst was one-shot at boot, not an ongoing loop — corrected my own initial "live loop" claim mid-incident. Root cause: DNS detection baseline predated adding Cortex to the SIEM host (allowlist was all Windows/telemetry domains). Fix: extended c2-detect allowlist with enrichment-infra eTLD+1s (commit 460203a→b5d41ad). Genuine C2 detection preserved (verified evil domain still flags). Same family as the veth/rule-100206 lesson: the monitor generates noise it then monitors.
+3. **License activation resets API keys** — suspected svc-n8n key died with activation; turned out to be a paste error (`read -s` is blind). Corrected the theory by evidence (curl auth check 200) instead of generating a needless new key. Kept the discipline: verify before acting.
+
+### PICERL (incident ran the full cycle on ourselves)
+Prepare (detection was built correctly) → Identify (job-age + by-hour metrics) → Contain (disabled SOAR workflow) → Eradicate (cancelled 10 stuck jobs, removed 40 corpses, deleted 41 junk alerts by rule-id) → Recover (stack clean) → Lessons (allowlist fix committed).
+
+### Commits
+- `2939b5b` — Phase 6-C: TheHive 5 operational
+- `b5d41ad` — fix(dns-c2): allowlist enrichment infrastructure (incident closure)
+
+### Pending / next session
+1. **Snapshot** `phase6c-thehive-operational` (cold-boot the siem first; verify time + `docker ps` stability before relying on stack).
+2. Restore Cortex org-key placeholders in n8n if any export left `PASTE_FULL_MDR_ADMIN_KEY` (SOAR Cortex enrichment + phishing Code nodes). Mind the space after `Bearer`.
+3. Re-enable the `Wazuh SOAR triage_` workflow (disabled during incident) — confirm no new beaconing tickets after the allowlist fix.
+4. 6-B remainder: TTL auto-unblock + domain/subdomain DNS-level blocking.
+5. **Then Phase 7 — GentleKiller ransomware (T1486+)**: first full attack chain against the complete stack.
+
+**License note:** StrangeBee Community, university email, valid to 2027-07-26. Portal account = university email. Renew before expiry.
