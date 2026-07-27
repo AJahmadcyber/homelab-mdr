@@ -426,3 +426,6 @@ Prepare (detection was built correctly) → Identify (job-age + by-hour metrics)
 5. **Then Phase 7 — GentleKiller ransomware (T1486+)**: first full attack chain against the complete stack.
 
 **License note:** StrangeBee Community, university email, valid to 2027-07-26. Portal account = university email. Renew before expiry.
+
+### Lesson 4 — Cortex catalog is fetched from the internet at boot
+`analyzer.urls = https://catalogs.download.strangebee.com/latest/json/analyzers.json` (in application.conf). At the first full cold boot, Cortex tried to fetch the catalog while the network was still choked (same root as the NTP/DNS failures) → fetch failed → all 9 analyzers went "obsolete" and the catalog showed empty → VirusTotal failed with "Service parameter is missing". Fix: once the network was healthy, `docker compose restart cortex` re-fetched the catalog (275 definitions), all 9 re-matched their existing worker IDs (n8n untouched), VirusTotal verified Success. Lesson: Cortex needs egress to strangebee at boot; a cold boot during network-choke silently empties the analyzer catalog. Post-boot stability check must include a live analyzer run, not just container status.
