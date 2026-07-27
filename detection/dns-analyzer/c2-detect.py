@@ -22,7 +22,15 @@ ALLOWLIST = {"microsoft.com","windowsupdate.com","windows.com","msftncsi.com",
              "microsoftonline.com","office.com","live.com","bing.com",
              "akamaiedge.net","akamai.net","akadns.net","edgekey.net",
              "google.com","gstatic.com","googleapis.com","cloudflare.com",
-             "in-addr.arpa","ip6.arpa","lab.local","localdomain"}
+             "in-addr.arpa","ip6.arpa","lab.local","localdomain",
+             # --- enrichment infrastructure (Cortex analyzers + docker) ---
+             # These are queried at high volume BY THE SOAR STACK ITSELF.
+             # Without this, the DNS C2 detector flags its own enrichment
+             # traffic as beaconing — a monitor-watches-itself feedback loop
+             # (see incident: cold-boot burst, rules 100306/100307).
+             "ghcr.io","abuse.ch","pulsedive.com","virustotal.com",
+             "urlscan.io","abuseipdb.com","docker.io","docker.com",
+             "cloudflare-dns.com","googleusercontent.com","githubusercontent.com"}
 
 def etld1(name):
     name = name.rstrip(".").lower()
