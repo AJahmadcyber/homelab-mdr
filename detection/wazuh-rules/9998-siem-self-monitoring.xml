@@ -20,6 +20,18 @@
     </mitre>
   </rule>
 
+  <!-- Legitimate Cortex entrypoint chowning the docker socket at container start.
+       Matches ONLY: /usr/bin/chown, cwd=/opt/cortex, on docker.sock.
+       Any other process/path touching the socket falls through to 100201 (full alert).
+       Source-side auditd already dropped read noise (-p wa); this suppresses the
+       remaining legitimate fchownat. See incident: SOAR self-inflicted loop (100201). -->
+  <rule id="100208" level="0">
+    <if_sid>100201</if_sid>
+    <field name="audit.exe">/usr/bin/chown</field>
+    <field name="audit.cwd">^/opt/cortex</field>
+    <description>SIEM Self-Monitoring: legitimate Cortex socket chown (suppressed)</description>
+  </rule>
+
   <rule id="100202" level="9">
     <if_sid>80700</if_sid>
     <field name="audit.key">sudoers_change</field>
