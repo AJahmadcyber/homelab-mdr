@@ -8,7 +8,7 @@
 
 A hands-on lab demonstrating detection engineering with open-source tools: collecting Windows and Linux telemetry into a SIEM, running a network IDS at the firewall, writing custom detection rules, mapping every detection to MITRE ATT&CK, and hardening the monitoring stack itself. Everything is version-controlled, with each build phase documented alongside its design rationale.
 
-The lab is built in phases — infrastructure and visibility first, then detection content, then response automation. Phases 1–5 are implemented and working; Phases 6–7 are the planned roadmap.
+The lab is built in phases — infrastructure and visibility first, then detection content, then response automation, then case management and enrichment. Phases 1–6 are implemented and working; Phase 7 (threat simulation) is in progress.
 
 Everything runs locally on a single hypervisor host. All attack simulations target only lab VMs under my control.
 
@@ -25,9 +25,9 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | 4.5 — SIEM self-monitoring | Agent on the SIEM + auditd, tamper detection for the monitoring stack | ✅ Implemented |
 | 5 — Network IDS + DNS detection | Suricata on pfSense + Suricata→Wazuh pipeline, DNS tunneling + behavioral C2 beaconing | ✅ Implemented |
 | 6-A — SOAR pipeline | Wazuh → n8n integration, high-severity alert triage and routing | ✅ Implemented |
-| 6-B — Automated response | Host isolation via pfSense REST API + allowlist + circuit breaker + investigation tickets | ✅ Core implemented |
-| 6-C — Case management + enrichment | TheHive 5 + Cassandra + Cortex (VirusTotal / AbuseIPDB / URLhaus), phishing email analysis | ⏳ Roadmap |
-| 7 — Threat simulation | Ransomware profile (T1486) run end to end against the stack | ⏳ Roadmap |
+| 6-B — Automated response | Host isolation via pfSense REST API + allowlist + circuit breaker + investigation tickets | ✅ Implemented |
+| 6-C — Case management + enrichment | TheHive 5 (BerkeleyDB + Lucene) + Cortex (9 analyzers), ATT&CK-classified tickets, phishing triage pipeline | ✅ Implemented |
+| 7 — Threat simulation | Ransomware profile (T1486) run end to end against the stack | ⏳ In progress |
 
 ---
 
@@ -192,7 +192,8 @@ homelab-mdr/
 
 ## Roadmap
 
-- **Phase 6 — SOAR:** 6-A wired Wazuh → n8n triage; 6-B (core done) added automated host isolation via the pfSense REST API — gated by an infrastructure allowlist and a circuit breaker — plus professional investigation tickets, validated with a real multi-stage attack chain. Remaining in 6-B: block TTL (auto-unblock) and DNS-level domain/subdomain blocking. **6-C** deploys the StrangeBee stack together — TheHive 5 + Cassandra (case management, where tickets land as investigable cases) and **Cortex** with analyzers (VirusTotal / AbuseIPDB / URLhaus / EmailRep) that fill the ticket's enrichment fields — and then builds an **automated phishing-email analysis** pipeline on top (n8n pulls from a test mailbox → extracts observables → Cortex analyzers → TheHive 5 case), mirroring the #1 ticket type an L1 analyst triages.
+- **Phase 6 — SOAR (implemented):** 6-A wired Wazuh → n8n triage; 6-B added automated host isolation via the pfSense REST API — gated by an infrastructure allowlist and a circuit breaker — plus professional investigation tickets, validated with a real multi-stage attack chain; 6-C deployed **TheHive 5** (BerkeleyDB + Lucene — no Cassandra, RAM-conscious) as the case-management front end where both ticket streams land, and **Cortex** (9 analyzers: VirusTotal / AbuseIPDB / URLhaus / Pulsedive / GoogleDNS / EmailRep / EmlParser / Abuse_Finder / Urlscan) for enrichment. The ticket builder is an **ATT&CK classifier** — it derives priority, investigation tasks and playbook from the alert's tactic. An **automated phishing-triage pipeline** (n8n → EmlParser → routed Cortex analyzers → reputation-independent signal scoring → TheHive case) mirrors the #1 ticket type an L1 analyst triages.
+  - *Planned enhancements:* block-TTL auto-unblock (read-modify-write on the alias), DNS-level domain/subdomain blocking (Unbound / pfBlockerNG NXDOMAIN, post-enrichment), and a reputation-independent signal scorer for network tickets (mirroring the phishing scorer).
 - **Phase 7 — Threat simulation:** a ransomware profile (T1486 and the surrounding chain) run against the full stack to validate detections end to end.
 - **Near-term detection extensions:** Shannon entropy and unique-subdomain cardinality on the DNS analyzer, JA3-based C2 hunting, index retention policy, and promoting high-confidence signatures to inline IPS via the SOAR path.
 
