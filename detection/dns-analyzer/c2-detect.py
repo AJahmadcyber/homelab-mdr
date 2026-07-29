@@ -22,6 +22,9 @@ ALLOWLIST = {"microsoft.com","windowsupdate.com","windows.com","msftncsi.com",
              "microsoftonline.com","office.com","live.com","bing.com",
              "akamaiedge.net","akamai.net","akadns.net","edgekey.net",
              "google.com","gstatic.com","googleapis.com","cloudflare.com",
+             "microsoft.microsoftofficehub","microsoft.windowscommunicationsapps",
+             "microsoft.skydrive","microsoft.microsoftedge","microsoft.bingweather",
+             "microsoft.windowsstore","microsoft.gethelp","microsoft.windowsmaps",
              "in-addr.arpa","ip6.arpa","lab.local","localdomain",
              # --- enrichment infrastructure (Cortex analyzers + docker) ---
              # These are queried at high volume BY THE SOAR STACK ITSELF.
