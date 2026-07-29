@@ -3,7 +3,7 @@
 > Build journal: SOC Detection Engineering Lab. From idea to full detection stack.
 > **GitHub:** https://github.com/AJahmadcyber/homelab-mdr
 
-**Last updated:** July 15, 2026 — Phase 6-B core complete (automated host isolation via pfSense REST API + safety controls + professional investigation tickets, validated end-to-end with a real multi-stage APT attack chain). Remaining in 6-B: TTL auto-unblock, Cortex enrichment, domain/subdomain block.
+**Last updated:** July 29, 2026 — Phase 6 CLOSED (6-A/6-B/6-C all implemented). Phase 7 (GentleKiller ransomware kill-chain) IN PROGRESS — Stage 1 (Credential Access) proven end-to-end; Stage 2 (Discovery) detection gap closed with new rule 100320.
 
 ---
 
@@ -18,9 +18,9 @@
 | 4.5 | SIEM Self-Monitoring (agent 002 + auditd + rules 100200–100205) | ✅ Done |
 | 5 | Suricata IDS on pfSense + Wazuh integration + DNS-layer detection | ✅ **Done** |
 | 6-A | n8n SOAR: Wazuh → n8n triage pipeline (high-sev alerts) | ✅ **Done** |
-| 6-B | Host isolation via pfSense REST API + allowlist + circuit breaker + investigation tickets | ✅ **Core done** (TTL/Cortex/domain-block remain) |
-| 6-C | TheHive 5 + Cassandra case management (needs RAM planning) | ⏳ Planned |
-| 7 | GentleKiller ransomware threat profile (T1486+) | ⏳ Planned last |
+| 6-B | Host isolation via pfSense REST API + allowlist + circuit breaker + investigation tickets | ✅ **Done** |
+| 6-C | Cortex enrichment + phishing pipeline + ATT&CK-classified tickets + TheHive 5 | ✅ **Done** |
+| 7 | GentleKiller ransomware threat profile (T1486+) | ⏳ **In progress** |
 
 ---
 
@@ -429,3 +429,104 @@ Prepare (detection was built correctly) → Identify (job-age + by-hour metrics)
 
 ### Lesson 4 — Cortex catalog is fetched from the internet at boot
 `analyzer.urls = https://catalogs.download.strangebee.com/latest/json/analyzers.json` (in application.conf). At the first full cold boot, Cortex tried to fetch the catalog while the network was still choked (same root as the NTP/DNS failures) → fetch failed → all 9 analyzers went "obsolete" and the catalog showed empty → VirusTotal failed with "Service parameter is missing". Fix: once the network was healthy, `docker compose restart cortex` re-fetched the catalog (275 definitions), all 9 re-matched their existing worker IDs (n8n untouched), VirusTotal verified Success. Lesson: Cortex needs egress to strangebee at boot; a cold boot during network-choke silently empties the analyzer catalog. Post-boot stability check must include a live analyzer run, not just container status.
+
+
+## Phase 7 — GentleKiller Kill-Chain — Record (2026-07-29)
+
+### Threat profile (ESET, June 2026)
+The Gentlemen (Microsoft: Storm-2697) — Russian-speaking RaaS, split from
+a Qilin affiliate mid-2025. Distinguishing trait: operators centrally
+build and hand affiliates a full EDR-killer suite, anchored by the in-house
+**GentleKiller** framework — 8+ variants, each impersonating a legit
+security product and abusing a different vulnerable kernel driver via
+**BYOVD** (Bring Your Own Vulnerable Driver) to reach Ring 0 and terminate
+400+ security processes across 48 vendors, bypassing user-mode tamper
+protection. Evasion: Enigma/Themida packing, spoofed vendor version info,
+copied certs + icons. Staged in a `GentlemenCollection` directory.
+Companion tooling: OxideHarvest (Rust credential stealer), external EDR
+killers (HexKiller, HavocKiller, ThrottleBlood). Full-lifecycle intrusion:
+edge-device access -> credential harvest -> domain-wide lateral movement ->
+EDR elimination (GentleKiller) -> NAS/backup destruction -> exfil -> encrypt.
+
+### Emulation mapping (7 stages, this lab)
+Each stage emulated with Atomic Red Team on win-ep, mapped to ATT&CK,
+validated against the live detection -> SOAR -> TheHive pipeline:
+
+| Stage | ATT&CK | Focus | Detection status |
+|---|---|---|---|
+| 1 — Execution / Credential Access | T1003.001 | LSASS dump | done (rules 100310/100311) |
+| 2 — Discovery | T1046 | Network/port scan | done (rule 100320, this session) |
+| 3 — Defense Evasion / BYOVD | T1562.001 + T1543.003 + T1068 | Driver-load + process-kill-burst correlation — the core detection challenge | not built |
+| 4 — Lateral Movement | T1021 / T1570 | win-ep -> siem | pending |
+| 5 — C2 | T1071.004 | DNS beaconing | done (rules 100306/100307) |
+| 6 — Impact | T1486 + T1490 + T1489 | Encrypt + shadow-copy delete | pending (behavioral rules) |
+
+**Key defensive insight (ESET's own):** signature blocklists FAIL against
+8 swappable BYOVD variants. The strongest signal is **behavioral** —
+correlate a process-termination burst with a kernel-driver-install event,
+plus a driver load not matching host inventory. That correlation rule is
+Stage 3, the showcase of this phase.
+
+### Stage 1 — Credential Access (T1003.001) — PROVEN
+Purpose: confirm the full pipeline works end-to-end as the first real link
+in the attack chain. Ran LSASS credential dump via Atomic Red Team
+(comsvcs.dll MiniDump). Custom rules 100310 (dump-level access) + 100311
+(comsvcs MiniDump cmdline) fired; the alert reached TheHive as a Critical
+credential-access ticket. Full path win-ep -> Sysmon -> Wazuh (custom rule)
+-> SOAR -> TheHive verified working.
+
+### Stage 2 — Discovery (T1046) — GAP CLOSED (rule 100320)
+Ran Atomic Red Team T1046 nmap port scan (win-ep -> siem). Scan succeeded
+but produced NO alert — investigated and found a **detection gap, not a
+transport gap** (last session had wrongly suspected transport):
+
+- **Root-cause chain:** (1) Suricata (gateway IDS) is blind to intra-LAN
+  scans — win-ep and siem are same-L2-segment, traffic never traverses
+  pfSense. (2) Sysmon EID1 for the scan **does reach** Wazuh (confirmed in
+  archives — the powershell wrapper `"powershell.exe" & {nmap <ip>}`).
+  (3) No rule matched that command-line pattern, so no alert.
+- **Fix:** new behavioral rule **100320** (`9996-endpoint-discovery.xml`)
+  — pcre2 match on `win.eventdata.commandLine` for scanner tool names
+  (nmap, masscan, rustscan, naabu, Test-NetConnection, ...), embeds the
+  full command line in the description so the analyst sees tool + target in
+  the ticket, not a generic "cmd".
+- **Chaining lesson:** use `if_group sysmon_event1` (base EID1 group), NOT
+  `sysmon_eid1_detections` (that's the classification group name, not a
+  chaining anchor). Copied exactly from working rule 92000.
+- **Verified live:** fires L10 on re-scan, lands in TheHive with tool name
+  + target. Commit `34bcde3`.
+
+### DNS C2 false-positive fix (rules 100306/100307)
+On cold boot, 100306/100307 fired on `microsoft.microsoftofficehub` from
+win-ep (query_count 57->81 per 5-min window). This is a **UWP app
+pseudo-domain** (Windows telemetry), not a real domain — `etld1()` returns
+it as-is, so the existing `microsoft.com` allowlist entry never matched.
+Fix: added common UWP telemetry pseudo-domains to the ALLOWLIST in the live
+analyzer `/opt/dns-analyzer/c2-detect.py`. Verified: 59 in-window queries,
+zero new alerts after the change. Also discovered the live `/opt` copy was
+**missing the enrichment-infra allowlist block** (Cortex feedback-loop
+protection from commit `b5d41ad`) — merged it back so live and repo match.
+Commit `1ba5265`.
+
+### Key lessons (Phase 7 start)
+- **Detection gap != transport gap.** An event reaching the archive but
+  firing no alert is a missing-rule problem, not a pipeline problem. Prove
+  which one with an archive grep before assuming.
+- **ossec.conf is bind-mounted from the host.** The Wazuh entrypoint copies
+  `config/wazuh_cluster/wazuh_manager.conf` (host) over
+  `/var/ossec/etc/ossec.conf` on every restart. In-container edits to
+  ossec.conf are wiped on restart — persistent changes must go on the host
+  file. (This is why `logall_json` reverted to `no` after boot.)
+- **Live-vs-repo drift is real.** The cron-run analyzer (`/opt/...`) had
+  diverged from the repo copy in both directions. Always `diff` live vs
+  repo before syncing; merge, don't overwrite.
+- **Archive is independent of detection.** Detection runs on the alerts
+  path regardless of `logall_json`; the archive is only for hunting on
+  events that fired no alert. Re-enabled temporarily for Stage 2 diagnosis,
+  then set back to `no` (disk-safe).
+
+### Next (Phase 7)
+- Stage 3 — Defense Evasion / BYOVD: build the correlation rule
+  (driver-load + process-kill burst) — the core detection challenge.
+- Stages 4—7: Lateral Movement, C2 (rules exist), Impact (build behavioral
+  shadow-copy-deletion + mass-encryption rules).
