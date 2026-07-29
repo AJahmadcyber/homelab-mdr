@@ -1,0 +1,16 @@
+<group name="discovery,network_scan,attack,">
+
+  <!-- 100320: Network scanner invoked via command line (T1046) -->
+  <!-- Behavioral: matches scanner-tool invocation in process command line. -->
+  <!-- Captures the tool name so it surfaces in the alert/ticket, not just "cmd". -->
+  <rule id="100320" level="10">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)\b(nmap|masscan|zenmap|rustscan|naabu|angryipscanner|advanced_port_scanner|Test-NetConnection|portscan|port-scan|Invoke-PortScan)\b</field>
+    <description>Network Service Discovery: scanner invocation in command line — $(win.eventdata.commandLine) (T1046)</description>
+    <mitre>
+      <id>T1046</id>
+    </mitre>
+    <group>discovery,network_scan,pci_dss_10.6.1,gdpr_IV_35.7.d,</group>
+  </rule>
+
+</group>
