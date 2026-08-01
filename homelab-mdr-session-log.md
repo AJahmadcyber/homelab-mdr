@@ -454,12 +454,15 @@ validated against the live detection -> SOAR -> TheHive pipeline:
 
 | Stage | ATT&CK | Focus | Detection status |
 |---|---|---|---|
-| 1 — Execution / Credential Access | T1003.001 | LSASS dump | done (rules 100310/100311) |
-| 2 — Discovery | T1046 | Network/port scan | done (rule 100320, this session) |
-| 3 — Defense Evasion / BYOVD | T1562.001 + T1543.003 + T1068 | Driver-load + process-kill-burst correlation — the core detection challenge | not built |
-| 4 — Lateral Movement | T1021 / T1570 | win-ep -> siem | pending |
-| 5 — C2 | T1071.004 | DNS beaconing | done (rules 100306/100307) |
-| 6 — Impact | T1486 + T1490 + T1489 | Encrypt + shadow-copy delete | pending (behavioral rules) |
+| 0 -- Initial Access | T1190, T1133 | Edge scan + CVE-2024-55591 auth-bypass | done (rule 100350) |
+| 1 -- Execution (fileless) | T1059.001, T1055.002 | In-memory injection, reflective DLL | pending |
+| 2 -- Discovery | T1046, T1018, T1082 | Network/port scan | done (rule 100320) |
+| 3 -- Credential Access | T1003.001 | LSASS dump, OxideHarvest | done (rules 100310/100311/100313) |
+| 4 -- Defense Evasion / BYOVD | T1562.001, T1543.003, T1068 | Driver-load + kill-burst correlation -- core detection challenge | pending |
+| 5 -- Lateral Movement | T1021, T1570, T1484 | win-ep -> siem | pending |
+| 6 -- C2 | T1071.004 | DNS beaconing | done (rules 100306/100307) |
+| 7 -- Impact | T1486, T1490, T1489 | Encrypt + shadow-copy delete | pending (behavioral rules) |
+> Full stage detail: docs/phase7-attack-scenario.md (single source of truth).
 
 **Key defensive insight (ESET's own):** signature blocklists FAIL against
 8 swappable BYOVD variants. The strongest signal is **behavioral** —
@@ -507,6 +510,48 @@ zero new alerts after the change. Also discovered the live `/opt` copy was
 **missing the enrichment-infra allowlist block** (Cortex feedback-loop
 protection from commit `b5d41ad`) — merged it back so live and repo match.
 Commit `1ba5265`.
+
+### Stage 0 — Initial Access (T1190) — GAP CLOSED (rule 100350)
+Attacker infrastructure stood up on the ThinkPad host (the "external"
+side, WAN of pfSense): Sliver C2 (Bishop Fox, for Stage 1+), nmap
+(connect-mode scan), Nuclei + 5106 templates (vuln probing). win-ep
+powered off to free ~2GB RAM -- it is the victim, not needed for edge
+attacks; brought back for Stage 1.
+
+Topology decision: Suricata runs on pfSense LAN only, and the host
+reaches the LAN (10.10.10.x) via the Host-Only adapter, so we attack
+pfSense LAN (10.10.10.1) directly -- no port-forwarding or WAN exposure
+needed. The attacker is "inside the LAN" rather than internet-external,
+but for *detection* that is identical: Suricata sees the same patterns,
+and external-vs-internal is a source-IP distinction in the rule.
+
+Detections proven end-to-end (attack -> Suricata -> Wazuh -> SOAR -> TheHive):
+- nmap scan: rule 100304 (ET SCAN nmap User-Agent) + 100301 (behavioral
+  horizontal SYN scan, our local rule -- stronger, survives UA change)
+- Nuclei exploit attempts: rule 100303 (ET EXPLOIT, e.g. Jenkins/Realtek
+  CVE probes) -- none succeeded (pfSense not vulnerable), Suricata caught
+  the attempts
+- Tool fingerprint: rule 100300 (ET INFO SSH-2.0-Go -- Nuclei/Sliver are
+  Go, same language family as GentleKiller's own tooling)
+- **Auth-bypass CVE-2024-55591: new rule 100350** -- matches the
+  local_access_token parameter (the Fortinet auth-bypass signature, The
+  Gentlemen's primary initial-access vector). pfSense is not FortiOS so
+  the exploit doesn't apply; the rule detects the *pattern* for training.
+
+Educational framing (why simulate, not exploit): pfSense 2.7.2 is fully
+patched -- a 5106-template Nuclei scan found no usable entry vuln. Rather
+than exploit a real hole (impossible on a patched firewall, or
+destructive if it worked), we simulate the CVE-2024-55591 signature and
+build detection for it. This is the detection-engineer story, not the
+pentester one.
+
+Key lesson (TLS blindness): rule 100350 first did NOT fire over HTTPS.
+Root cause: the request was TLS-encrypted, so Suricata could not see the
+HTTP URI (local_access_token) inside the ciphertext. Re-sent over HTTP
+(port 80) -> Suricata saw the URI -> rule fired -> TheHive High. HTTP-URI
+detection only works on cleartext; encrypted traffic needs TLS
+inspection or TLS-metadata rules. Many URI-based rules fail silently on
+HTTPS -- a critical SOC caveat.
 
 ### Key lessons (Phase 7 start)
 - **Detection gap != transport gap.** An event reaching the archive but
