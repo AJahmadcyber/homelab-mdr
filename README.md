@@ -8,7 +8,7 @@
 
 A hands-on lab demonstrating detection engineering with open-source tools: collecting Windows and Linux telemetry into a SIEM, running a network IDS at the firewall, writing custom detection rules, mapping every detection to MITRE ATT&CK, and hardening the monitoring stack itself. Everything is version-controlled, with each build phase documented alongside its design rationale.
 
-The lab is built in phases — infrastructure and visibility first, then detection content, then response automation, then case management and enrichment. Phases 1–6 are implemented and working; Phase 7 (threat simulation) is in progress.
+The lab is built in phases — infrastructure and visibility first, then detection content, then response automation, then case management and enrichment. Phases 1–6 are implemented and working; Phase 7 — a full-lifecycle intrusion modeled on a real 2026 ransomware operation (The Gentlemen / GentleKiller RaaS), emulated stage by stage — is in progress.
 
 Everything runs locally on a single hypervisor host. All attack simulations target only lab VMs under my control.
 
@@ -27,7 +27,7 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | 6-A — SOAR pipeline | Wazuh → n8n integration, high-severity alert triage and routing | ✅ Implemented |
 | 6-B — Automated response | Host isolation via pfSense REST API + allowlist + circuit breaker + investigation tickets | ✅ Implemented |
 | 6-C — Case management + enrichment | TheHive 5 (BerkeleyDB + Lucene) + Cortex (9 analyzers), ATT&CK-classified tickets, phishing triage pipeline | ✅ Implemented |
-| 7 — Threat simulation | Ransomware profile (T1486) run end to end against the stack | ⏳ In progress |
+| 7 — Adversary emulation | Full GentleKiller (The Gentlemen RaaS) kill-chain — 8 stages from edge exploitation to encryption, each mapped to ATT&CK and validated end to end | ⏳ In progress |
 
 ---
 
@@ -194,7 +194,7 @@ homelab-mdr/
 
 - **Phase 6 — SOAR (implemented):** 6-A wired Wazuh → n8n triage; 6-B added automated host isolation via the pfSense REST API — gated by an infrastructure allowlist and a circuit breaker — plus professional investigation tickets, validated with a real multi-stage attack chain; 6-C deployed **TheHive 5** (BerkeleyDB + Lucene — no Cassandra, RAM-conscious) as the case-management front end where both ticket streams land, and **Cortex** (9 analyzers: VirusTotal / AbuseIPDB / URLhaus / Pulsedive / GoogleDNS / EmailRep / EmlParser / Abuse_Finder / Urlscan) for enrichment. The ticket builder is an **ATT&CK classifier** — it derives priority, investigation tasks and playbook from the alert's tactic. An **automated phishing-triage pipeline** (n8n → EmlParser → routed Cortex analyzers → reputation-independent signal scoring → TheHive case) mirrors the #1 ticket type an L1 analyst triages.
   - *Planned enhancements:* block-TTL auto-unblock (read-modify-write on the alias), DNS-level domain/subdomain blocking (Unbound / pfBlockerNG NXDOMAIN, post-enrichment), and a reputation-independent signal scorer for network tickets (mirroring the phishing scorer).
-- **Phase 7 — Threat simulation:** a ransomware profile (T1486 and the surrounding chain) run against the full stack to validate detections end to end.
+- **Phase 7 — Adversary emulation (GentleKiller kill-chain):** rather than a single ransomware payload, Phase 7 reconstructs the *full intrusion lifecycle* of The Gentlemen / GentleKiller — the #2 RaaS of 2026 (ESET, June 2026) — as an 8-stage attack chain: edge exploitation (CVE-2024-55591 auth-bypass) → fileless in-memory execution → discovery → credential access (LSASS) → BYOVD EDR-killer → lateral movement → DNS C2 → impact (mass encryption + shadow-copy deletion), with LOLBins abuse and a SOAR ticket woven through every stage. Each stage is emulated with professional tooling (Sliver C2, Atomic Red Team, Nuclei) and validated attack → detection → SOAR → TheHive. The design centers on *behavioral* detection — the strongest signal against an actor that swaps 8 BYOVD driver variants and writes its tooling in Go. Stages 0, 2, 3, and 6 have detections proven; the BYOVD correlation rule and a resilient "surviving channel" detection (endpoint-silence + network-alive) are the flagship builds. Full design: `docs/phase7-attack-scenario.md`.
 - **Near-term detection extensions:** Shannon entropy and unique-subdomain cardinality on the DNS analyzer, JA3-based C2 hunting, index retention policy, and promoting high-confidence signatures to inline IPS via the SOAR path.
 
 ---
