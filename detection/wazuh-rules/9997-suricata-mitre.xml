@@ -31,6 +31,16 @@
   </rule>
 
   <!-- High-severity Suricata alerts (Suricata severity 1) escalate -->
+  <rule id="100308" level="12">
+    <if_sid>100300</if_sid>
+    <field name="alert.signature_id">^100350$</field>
+    <description>Suricata: Fortinet CVE-2024-55591 auth-bypass attempt (local_access_token) - $(alert.signature)</description>
+    <mitre>
+      <id>T1190</id>
+    </mitre>
+    <group>initial_access,exploitation,</group>
+  </rule>
+
   <rule id="100303" level="10">
     <if_sid>100300</if_sid>
     <field name="alert.severity">^1$</field>
