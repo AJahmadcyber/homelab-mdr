@@ -80,9 +80,13 @@ Each rule has a deliberately chosen *type* (behavioral / correlation / frequency
 
 | # | Rule | Type | Best source to build from | Status |
 |---|---|---|---|---|
-| 0 | Edge auth-bypass | Signature | ET Open + Suricata rules | ⏳ |
+| 0 | Edge auth-bypass | Signature | **rule 100350 — implemented** (CVE-2024-55591 URI) | ✅ |
 | 1a | Reflective ImageLoad (unusual path) | Behavioral | elastic/protections-artifacts + Sigma `image_load` | ⏳ |
 | 1b | Process hollowing (EID 1+8+10) | Correlation | SigmaHQ T1055 | ⏳ |
+| 1c | Fileless loader (csc.exe from PowerShell) | Behavioral | **rule 100330 — implemented** (T1055/T1059.001) | ✅ |
+| 1d | LOLBin outbound + beaconing confirm | Behavioral / Frequency | **rules 100331/100332 — implemented** | ✅ |
+| 1e | Persistence: ASEP write, writer-agnostic | Behavioral | **rules 100333–100338 — implemented** (SigmaHQ ASEP + Nextron); inherits 92300/92302 to survive Registry-API writes | ✅ |
+| 1f | FP suppression: benign Base64-like reg add | Tuning | **rule 100390 — implemented** (drops 92041 on plain exe path) | ✅ |
 | 2 | Scanner cmdline | Behavioral | **rule 100320 — implemented** | ✅ |
 | 3 | LSASS dump | Behavioral | **rules 100310/311/313 — implemented** | ✅ |
 | 4a | Driver load, unusual path/signer | Behavioral | SigmaHQ `driver_load_vuln_drivers_names.yml` | ⏳ |
@@ -133,6 +137,9 @@ Each rule has a deliberately chosen *type* (behavioral / correlation / frequency
 ## 8. Implementation status
 
 **Done (earlier phases):**
+- Stage 0 — Initial Access: rule **100350** (CVE-2024-55591 auth-bypass URI, Suricata→Wazuh).
+- Stage 1a — Execution (fileless): rules **100330 / 100331 / 100332** (csc.exe loader, LOLBin outbound, beaconing confirm; T1055/T1059.001/T1071.001). Proven end-to-end via Sliver C2.
+- Stage 1b — Persistence: rules **100333–100338** (ASEP autostart, writer-agnostic via 92300/92302 inheritance; T1547.001). Proven against Sliver Registry-API write (image=powershell.exe, not reg.exe) — catches persistence that Wazuh's reg.exe-bound rules miss. Encoded-payload path fires 100334 (L13). FP suppression **100390** drops benign Base64-like reg-add noise (92041).
 - Stage 2 — Discovery: rule **100320** (behavioral scanner-cmdline, T1046).
 - Stage 3 — Credential Access: rules **100310 / 100311 / 100313** (LSASS dump, comsvcs, LOLBAS esentutl).
 - Stage 6 — C2: rules **100306 / 100307** (DNS beaconing, rate-based + allowlist).
@@ -140,7 +147,7 @@ Each rule has a deliberately chosen *type* (behavioral / correlation / frequency
 
 **To build (Phase 7):**
 - Prereq: verify Sysmon logs EID 6 (Driver Load) + EID 7045 on win-ep; tune config if not.
-- Stage 1 — fileless: rules 1a (reflective ImageLoad) + 1b (hollowing correlation).
+- Stage 1 (advanced) — remaining: 1a (reflective ImageLoad) + 1b (hollowing EID 1+8+10 correlation). Core fileless + persistence done; these deepen coverage.
 - Stage 4 — BYOVD: 4a (driver load) → 4b (service) → 4c (kill burst) → **4d (correlation, the core)** → 4e (blocklist) → 4f (blocklist/HVCI tampering).
 - Stage 5 — Lateral Movement: win-ep → siem via agent 002.
 - Stage 7 — Impact: 7a (shadow-copy deletion) + 7b (mass encryption).

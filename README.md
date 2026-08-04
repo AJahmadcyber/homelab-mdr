@@ -27,7 +27,11 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | 6-A — SOAR pipeline | Wazuh → n8n integration, high-severity alert triage and routing | ✅ Implemented |
 | 6-B — Automated response | Host isolation via pfSense REST API + allowlist + circuit breaker + investigation tickets | ✅ Implemented |
 | 6-C — Case management + enrichment | TheHive 5 (BerkeleyDB + Lucene) + Cortex (9 analyzers), ATT&CK-classified tickets, phishing triage pipeline | ✅ Implemented |
-| 7 — Adversary emulation | Full GentleKiller (The Gentlemen RaaS) kill-chain — 8 stages from edge exploitation to encryption, each mapped to ATT&CK and validated end to end | ⏳ In progress |
+| 7 — Adversary emulation (GentleKiller kill-chain) | Full-lifecycle intrusion emulated stage by stage — see sub-phases below | ⏳ In progress |
+| ↳ 7-A — Initial Access | Edge exploitation: CVE-2024-55591 (FortiOS auth-bypass) URI signature; nmap + Nuclei recon — Suricata rules | ✅ Implemented |
+| ↳ 7-B — Fileless Execution → C2 | In-memory Sliver beacon via PowerShell reflective loader (no disk write); LOLBin outbound + beaconing confirm | ✅ Implemented |
+| ↳ 7-C — Persistence | ASEP autostart write, writer-agnostic — fires even when the implant writes via the Registry API, not reg.exe | ✅ Implemented |
+| 8 — Coverage engine | Atomic Red Team chains, automated detection scoring, live MITRE ATT&CK Navigator layer | ⏳ Roadmap |
 
 ---
 
@@ -62,6 +66,21 @@ Every custom rule is mapped to a MITRE ATT&CK technique, with IDs namespaced by 
 | Credential theft — Mimikatz | Mimikatz signatures in PowerShell 4104 script blocks | Endpoint | 100312 |
 | Credential theft — browser stores | Browser credential-store access (esentutl / Login Data) | Endpoint | 100313 |
 | T1562.001 / T1611 / T1610 / T1548.003 / T1098 / T1543.002 / T1562.004 | SIEM self-monitoring (auditd) — tamper detection for the monitoring stack | SIEM host | 100200–100205 |
+
+
+### Phase 7 — adversary emulation: attack commands per stage
+
+Each stage is driven by real red-team tooling from the attacker host (ThinkPad, external to the pfSense LAN), then validated **attack → Sysmon/Suricata → Wazuh → SOAR → TheHive**. Commands are representative; encoded payloads are abbreviated.
+
+| Sub-phase | Tool | Attack command (attacker side) | Fires |
+| --- | --- | --- | --- |
+| 7-A Initial Access | nmap 7.95 | `nmap -sS -Pn 10.10.10.1` (connect-mode SYN scan across pfSense LAN) | 100301 / 100304 |
+| 7-A Initial Access | Nuclei 3.11.0 | `nuclei -u https://10.10.10.1` (full 5106-template scan) | 100303 / 100300 |
+| 7-A Initial Access | curl | `curl -k "https://10.10.10.1/api/v2/cmdb/system/admin?local_access_token=1"` (CVE-2024-55591 auth-bypass URI pattern) | 100350 |
+| 7-B Fileless → C2 | Sliver C2 v1.7.3 | `execute -- powershell.exe -EncodedCommand <base64>` — in-memory reflective loader (`DownloadData` → `VirtualAlloc` → `CreateThread`), no disk write | 100330 / 100331 / 100332 |
+| 7-C Persistence | Sliver C2 v1.7.3 | `registry write --hive HKCU --type string "Software\Microsoft\Windows\CurrentVersion\Run\<name>" "powershell.exe -WindowStyle Hidden -nop -enc <base64>"` — Registry API, not reg.exe | 100334 / 100336 |
+
+**Why the persistence command is the differentiator:** Sliver's `registry write` uses the Windows Registry API from inside the implant, so Sysmon EID 13 records `image=powershell.exe`, not `reg.exe`. Wazuh's built-in Run-key rules are all bound to `image=reg.exe` and go silent; the custom rule inherits from `92300`/`92302` and fires on *what* is persisted, catching the write regardless of writer.
 
 ### The DNS behavioral C2 detection (Phase 5)
 
