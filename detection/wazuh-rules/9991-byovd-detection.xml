@@ -1,0 +1,76 @@
+<!--
+  Phase 7 - Stage 4 (BYOVD) - kernel driver load detection
+
+  Sensor note: sysmon-modular shipped DriverLoad with signer-based exclusions
+  (Microsoft/Intel + Valid signature). Those exclusions blind the exact class
+  BYOVD abuses - a validly signed but vulnerable driver. Measured volume on this
+  host is 9 driver loads per full boot, so filtering saved nothing and cost
+  visibility. The sensor now logs every driver load; selection happens here, in
+  the rules, where it is auditable.
+
+  Anchor: rule 61608 (0595-win-sysmon_rules.xml, level 0) is the default rule
+  that matches EID 6 on windows_eventchannel-decoded events. Confirmed
+  empirically - the group name is "sysmon_event6" with NO underscore before the
+  digit, unlike sysmon_event_13. Never guess this; read it from a live rule.
+
+  Field paths confirmed from a live EID 6 event:
+    win.eventdata.imageLoaded     (backslashes arrive escaped)
+    win.eventdata.hashes          (one combined field: SHA1=,MD5=,SHA256=,IMPHASH=)
+    win.eventdata.signed          ("true" / "false")
+    win.eventdata.signature       (e.g. "Microsoft Windows")
+    win.eventdata.signatureStatus ("Valid" / "Unavailable")
+
+  signatureStatus is deliberately NOT used as a signal: Sysmon resolves
+  signatures asynchronously, so rapid manual loads legitimately report
+  "Unavailable". Alerting on it would generate false positives.
+
+  Design: broad low-severity base + narrow high-precision children. The base
+  fails OPEN so an unanticipated driver load is never silent.
+
+  Reserved: 100344 (LOLDrivers hash match, 4e), 100345 (driver-load + kill-burst
+  correlation, 4d).
+-->
+<group name="sysmon,windows,byovd,">
+
+  <rule id="100340" level="3">
+    <if_sid>61608</if_sid>
+    <description>Sysmon: kernel driver loaded - $(win.eventdata.imageLoaded)</description>
+    <mitre>
+      <id>T1543.003</id>
+    </mitre>
+    <group>driver_load,</group>
+  </rule>
+
+  <rule id="100341" level="12">
+    <if_sid>100340</if_sid>
+    <field name="win.eventdata.imageLoaded" type="pcre2">(?i)C:[\\]+(Windows[\\]+Temp|Users|ProgramData|PerfLogs|Temp|Windows[\\]+Tasks|Windows[\\]+Debug|\$Recycle\.Bin|Recovery)[\\]+</field>
+    <description>BYOVD: kernel driver loaded from user-writable path - $(win.eventdata.imageLoaded) (signer: $(win.eventdata.signature))</description>
+    <mitre>
+      <id>T1068</id>
+      <id>T1543.003</id>
+    </mitre>
+    <group>driver_load,byovd,</group>
+  </rule>
+
+  <rule id="100342" level="12">
+    <if_sid>100340</if_sid>
+    <field name="win.eventdata.signed">^false$</field>
+    <description>BYOVD: unsigned kernel driver loaded - $(win.eventdata.imageLoaded)</description>
+    <mitre>
+      <id>T1068</id>
+      <id>T1553.006</id>
+    </mitre>
+    <group>driver_load,byovd,</group>
+  </rule>
+
+  <rule id="100343" level="8">
+    <if_sid>100340</if_sid>
+    <field name="win.eventdata.imageLoaded" type="pcre2">(?i)^(?!C:[\\]+Windows[\\]+System32[\\]+)(?!C:[\\]+Windows[\\]+SysWOW64[\\]+)(?!C:[\\]+Program Files)</field>
+    <description>Kernel driver loaded from non-standard location - $(win.eventdata.imageLoaded)</description>
+    <mitre>
+      <id>T1543.003</id>
+    </mitre>
+    <group>driver_load,</group>
+  </rule>
+
+</group>
