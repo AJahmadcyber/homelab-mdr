@@ -4,7 +4,7 @@
 > Design document for Phase 7: a full-lifecycle ransomware intrusion modeled on **The Gentlemen RaaS / GentleKiller** (ESET, June 2026), emulated stage-by-stage against the lab's detection → SOAR → TheHive pipeline.
 >
 > **Repo:** https://github.com/AJahmadcyber/homelab-mdr
-> **Status:** Design/reference document. Stages 2, 3 (cred access), and 6 already implemented in earlier phases; the rest are the Phase 7 build plan.
+> **Status:** Design/reference document. Stages 0, 1 (execution + persistence), 2, 3 and 6 are implemented; stages 4, 5, 7 and the L4 resilient layer are the remaining Phase 7 build plan.
 
 ---
 
@@ -39,7 +39,7 @@ Eight stages, each mapped to ATT&CK. Three techniques cut *across* stages rather
 | # | Stage | ATT&CK | What happens | LOLBins (thread A) | Fileless (thread B) | SOAR ticket (thread C) |
 |---|---|---|---|---|---|---|
 | 0 | Initial Access | T1190, T1133 | Exploit exposed edge (Fortinet-style auth bypass) or use IAB-purchased / brute-forced credentials | — | — | ✅ |
-| 1 | Execution | T1059.001, T1055.002 | Payload injected into RAM (reflective DLL / beacon), no disk write; establishes foothold and profiles the host | `mshta`, `rundll32`, `regsvr32` to launch | ✅ in-memory, diskless | ✅ |
+| 1 | Execution + Persistence | T1059.001, T1055, T1547.001 | Payload loaded into RAM (reflective loader / beacon), no disk write; establishes foothold, profiles the host, then plants an autostart entry — written from inside the implant via the Registry API, not `reg.exe` — so the beacon survives reboot | `powershell`, `csc.exe`, `reg` | ✅ in-memory, diskless | ✅ |
 | 2 | Discovery | T1046, T1018, T1082 | Network / system / target reconnaissance | `net`, `nltest`, `wmic`, `systeminfo` | — | ✅ |
 | 3 | Credential Access | T1003.001 | LSASS dump + OxideHarvest; privilege escalation | `comsvcs.dll`, `esentutl`, `reg save` | ✅ in-memory dump | ✅ |
 | 4 | Defense Evasion / BYOVD | T1562.001, T1543.003, T1068 | Load signed-but-vulnerable driver → Ring 0 → terminate EDR/AV (400+ processes) | `sc`, `reg`, `fltmc` | — | ✅ |
@@ -57,14 +57,23 @@ Not everything comes from Atomic Red Team (which runs isolated single techniques
 
 | # | Stage | Chosen tool | Source | Why |
 |---|---|---|---|---|
-| 0 | Initial Access | Manual `curl` to pfSense mgmt + **Sliver** stager | Bishop Fox | Atomic doesn't cover edge exploitation; manual request is cleaner and safer |
-| 1 | Execution (fileless) | **Sliver** reflective loader + Atomic T1055 (Go process hollowing) | Sliver + Atomic | Sliver "Beacon" = professional in-memory injection; major upgrade over isolated atomics |
+| 0 | Initial Access | ✅ **nmap** (scan) + **Nuclei** (vuln probe) + manual `curl` (CVE-2024-55591 auth-bypass URI) | manual + ProjectDiscovery | Atomic doesn't cover edge exploitation; a crafted request is cleaner, safer and reproducible. Implemented (rules 100300/301/303/304 + 100350) |
+| 1 | Execution + Persistence (fileless) | ✅ **Sliver** in-memory loader (`Add-Type` → `csc.exe`) + **Sliver** `registry write` for the autostart entry | Bishop Fox | Sliver's beacon is professional in-memory execution; two different writers for the Run key on purpose, to prove the rule is writer-agnostic. Implemented (rules 100330–100332, 100333–100336 + 100338) |
 | 2 | Discovery | ✅ Atomic T1046 (done) + Sliver recon | Atomic + Sliver | Implemented (rule 100320) |
 | 3 | Credential Access | ✅ Atomic T1003.001 (done) | Atomic | Implemented (rules 100310/311/313) |
 | 4 | Defense Evasion / BYOVD | `sc create` + a benign signed driver + **LOLDrivers** sample (load only, **no exploit**) | loldrivers.io | Safe simulation of the detectable sequence; real PoC = Ring 0 risk with zero added detection value |
 | 5 | Lateral Movement | **Sliver** pivoting / **Impacket** wmiexec | Sliver / Impacket | Multiplayer + pivot far stronger than an isolated atomic |
 | 6 | C2 | ✅ existing rules + **Sliver DNS C2** | existing + Sliver | Sliver's real DNS C2 exercises rules 100306/100307 for real |
 | 7 | Impact | Atomic T1486/T1490 + PowerShell encrypt script (test folder only) | Atomic + manual | Simulated encryption on throwaway files only |
+
+**Attacker infrastructure (as built).** All offensive tooling runs on the **ThinkPad host, 10.10.10.2** — the VirtualBox host, architecturally *external* to the pfSense LAN. Nothing offensive is installed on a lab VM, so the victim's telemetry stays clean.
+
+| Tool | Version | Role |
+|---|---|---|
+| Sliver C2 | v1.7.3 | C2 framework, in-memory implant, persistence via Registry API — mTLS listener on `10.10.10.2:8443`, HTTP stager on `:8080` |
+| nmap | 7.95 | Port / service discovery (connect mode — no Npcap on the host) |
+| Nuclei | v3.11.0 | Vulnerability probing, 5106+ templates |
+| curl | native | Targeted CVE-2024-55591 auth-bypass request |
 
 **Cross-cutting tooling:** LOLBins → native Windows binaries, with the **LOLBAS project** as the reference catalog. Fileless → **Sliver** in-memory abilities (and, for verification from the defender side, **pe-sieve / hollows_hunter** by hasherezade, which detect in-memory implants and confirm our fileless rules actually fire).
 
@@ -80,12 +89,13 @@ Each rule has a deliberately chosen *type* (behavioral / correlation / frequency
 
 | # | Rule | Type | Best source to build from | Status |
 |---|---|---|---|---|
-| 0 | Edge auth-bypass | Signature | **rule 100350 — implemented** (CVE-2024-55591 URI) | ✅ |
+| 0a | Edge auth-bypass | Signature | **rule 100350 — implemented** (CVE-2024-55591 URI) | ✅ |
+| 0b | Edge scan / vuln-probe (pre-exploitation recon) | Behavioral / Signature | **rules 100300 / 100301 / 100303 / 100304 — implemented** (Go-binary fingerprint, horizontal SYN scan, ET EXPLOIT attempts, nmap User-Agent) | ✅ |
 | 1a | Reflective ImageLoad (unusual path) | Behavioral | elastic/protections-artifacts + Sigma `image_load` | ⏳ |
 | 1b | Process hollowing (EID 1+8+10) | Correlation | SigmaHQ T1055 | ⏳ |
 | 1c | Fileless loader (csc.exe from PowerShell) | Behavioral | **rule 100330 — implemented** (T1055/T1059.001) | ✅ |
 | 1d | LOLBin outbound + beaconing confirm | Behavioral / Frequency | **rules 100331/100332 — implemented** | ✅ |
-| 1e | Persistence: ASEP write, writer-agnostic | Behavioral | **rules 100333–100338 — implemented** (SigmaHQ ASEP + Nextron); inherits 92300/92302 to survive Registry-API writes | ✅ |
+| 1e | Persistence: ASEP write, writer-agnostic | Behavioral | **rules 100333–100336 + 100338 — implemented** (SigmaHQ ASEP + Elastic); inherits 92300/92302 to survive Registry-API writes. 100337 reserved for persistence-correlated-with-active-C2 | ✅ |
 | 1f | FP suppression: benign Base64-like reg add | Tuning | **rule 100390 — implemented** (drops 92041 on plain exe path) | ✅ |
 | 2 | Scanner cmdline | Behavioral | **rule 100320 — implemented** | ✅ |
 | 3 | LSASS dump | Behavioral | **rules 100310/311/313 — implemented** | ✅ |
@@ -137,9 +147,9 @@ Each rule has a deliberately chosen *type* (behavioral / correlation / frequency
 ## 8. Implementation status
 
 **Done (earlier phases):**
-- Stage 0 — Initial Access: rule **100350** (CVE-2024-55591 auth-bypass URI, Suricata→Wazuh).
+- Stage 0 — Initial Access: rules **100300 / 100301 / 100303 / 100304** (scan and vuln-probe detection at the edge) + **100350** (CVE-2024-55591 auth-bypass URI, Suricata→Wazuh).
 - Stage 1a — Execution (fileless): rules **100330 / 100331 / 100332** (csc.exe loader, LOLBin outbound, beaconing confirm; T1055/T1059.001/T1071.001). Proven end-to-end via Sliver C2.
-- Stage 1b — Persistence: rules **100333–100338** (ASEP autostart, writer-agnostic via 92300/92302 inheritance; T1547.001). Proven against Sliver Registry-API write (image=powershell.exe, not reg.exe) — catches persistence that Wazuh's reg.exe-bound rules miss. Encoded-payload path fires 100334 (L13). FP suppression **100390** drops benign Base64-like reg-add noise (92041).
+- Stage 1b — Persistence: rules **100333–100336 + 100338** (ASEP autostart, writer-agnostic via 92300/92302 inheritance; T1547.001). Proven against Sliver Registry-API write (image=powershell.exe, not reg.exe) — catches persistence that Wazuh's reg.exe-bound rules miss. Encoded-payload path fires 100334 (L13). FP suppression **100390** drops benign Base64-like reg-add noise (92041).
 - Stage 2 — Discovery: rule **100320** (behavioral scanner-cmdline, T1046).
 - Stage 3 — Credential Access: rules **100310 / 100311 / 100313** (LSASS dump, comsvcs, LOLBAS esentutl).
 - Stage 6 — C2: rules **100306 / 100307** (DNS beaconing, rate-based + allowlist).
