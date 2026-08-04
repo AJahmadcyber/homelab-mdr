@@ -1,0 +1,72 @@
+<!--
+  Phase 7 - Stage 1b: Persistence (T1547.001)
+
+  Rule-tree precedence note (measured, not assumed):
+  Wazuh evaluates ruleset/rules/ before etc/rules/ and stops at the first
+  matching branch. Default rule 92300 owns CurrentVersion\Run, so a sibling
+  rule anchored on sysmon_event_13 never sees those events. Coverage is
+  therefore split in two:
+    100333 - chains from 92300+92302 -> paths the default ruleset claims
+             (92302 is a sibling that wins first on image=reg.exe, so we
+              must inherit from it too; measured, not assumed)
+    100338 - anchors on EID 13  -> ASEP paths 92300 does not cover
+  Both fail OPEN at level 5 so an unanticipated payload is never silent.
+  Children classify on WHAT is persisted, not WHO writes it.
+  Sources: SigmaHQ registry_set ASEP family, Nextron susp_run_key_img_folder.
+  IDs 100333-100339 (100337 reserved: correlation with active C2)
+-->
+<group name="sysmon,sysmon_eid13_detections,windows,persistence,">
+
+  <rule id="100333" level="6">
+    <if_sid>92300, 92302</if_sid>
+    <options>no_full_log</options>
+    <description>ASEP autostart location modified on $(win.system.computer) by $(win.eventdata.image) - value: $(win.eventdata.details)</description>
+    <mitre>
+      <id>T1547.001</id>
+    </mitre>
+  </rule>
+
+  <rule id="100338" level="6">
+    <if_group>sysmon_event_13</if_group>
+    <field name="win.eventdata.eventType">SetValue</field>
+    <field name="win.eventdata.targetObject" type="pcre2">(?i)\\\\CURRENTVERSION\\\\(RUNONCEEX|RUNSERVICES|RUNSERVICESONCE|POLICIES\\\\EXPLORER\\\\RUN)\\\\|\\\\CURRENTVERSION\\\\WINLOGON\\\\(SHELL|USERINIT|TASKMAN)|\\\\COMMAND PROCESSOR\\\\AUTORUN|\\\\ENVIRONMENT\\\\USERINITMPRLOGONSCRIPT</field>
+    <options>no_full_log</options>
+    <description>ASEP autostart location modified on $(win.system.computer) by $(win.eventdata.image) - value: $(win.eventdata.details)</description>
+    <mitre>
+      <id>T1547.001</id>
+    </mitre>
+  </rule>
+
+  <rule id="100334" level="13">
+    <if_sid>100333, 100338</if_sid>
+    <field name="win.eventdata.details" type="pcre2">(?i)(-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{20,}|frombase64string|invoke-expression|\biex\b|downloadstring|downloadfile|-w(indowstyle)?\s+hidden|-nop\b|-noprofile)</field>
+    <options>no_full_log</options>
+    <description>Persistence: obfuscated/encoded payload written to autostart on $(win.system.computer) - value: $(win.eventdata.details)</description>
+    <mitre>
+      <id>T1547.001</id>
+      <id>T1027</id>
+    </mitre>
+  </rule>
+
+  <rule id="100335" level="12">
+    <if_sid>100333, 100338</if_sid>
+    <field name="win.eventdata.details" type="pcre2">(?i)(powershell|pwsh|cmd\.exe|wscript|cscript|mshta|rundll32|regsvr32|msiexec|certutil|bitsadmin|curl\.exe|wmic)</field>
+    <options>no_full_log</options>
+    <description>Persistence: script interpreter or LOLBin set to autostart on $(win.system.computer) - value: $(win.eventdata.details)</description>
+    <mitre>
+      <id>T1547.001</id>
+      <id>T1059</id>
+    </mitre>
+  </rule>
+
+  <rule id="100336" level="12">
+    <if_sid>100333, 100338</if_sid>
+    <field name="win.eventdata.details" type="pcre2">(?i)(%APPDATA%|%LOCALAPPDATA%|%TEMP%|%TMP%|%PUBLIC%|%PROGRAMDATA%|\\\\APPDATA\\\\|\\\\PROGRAMDATA\\\\|\\\\TEMP\\\\|\\\\TMP\\\\|\\\\USERS\\\\PUBLIC\\\\|\\\\USERS\\\\DEFAULT\\\\|\\\\DOWNLOADS\\\\|\\\\PERFLOGS\\\\|\\\\\$RECYCLE\\.BIN\\\\)</field>
+    <options>no_full_log</options>
+    <description>Persistence: autostart payload in user-writable staging path on $(win.system.computer) - value: $(win.eventdata.details)</description>
+    <mitre>
+      <id>T1547.001</id>
+    </mitre>
+  </rule>
+
+</group>

@@ -1,0 +1,22 @@
+<!--
+  Phase 7 - FP suppression for noisy default rules
+  92041 (Base64-like pattern in reg add) has an effectively-optional regex tail:
+  the Base64 group is (?:...){4})* with a trailing '=?' — it matches ANY
+  `reg add ... /d <value>`, including clean file paths like C:\Windows\...\x.exe.
+  We drop it to level 0 ONLY when the added value is a plain executable path
+  (drive-letter + .exe/.dll/.bat/.cmd tail). A genuinely encoded payload has no
+  such tail and still fires 92041; the malicious EID13 case is covered by 100334.
+-->
+<group name="sysmon,sysmon_eid1_detections,windows,">
+
+  <rule id="100390" level="0">
+    <if_sid>92041</if_sid>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)\/d\s+"?[a-z]:\\\\[^"]*\.(exe|dll|bat|cmd)"?(\s|$)</field>
+    <options>no_full_log</options>
+    <description>Registry add value is a plain executable path (benign Base64-like FP from 92041) on $(win.system.computer)</description>
+    <mitre>
+      <id>T1112</id>
+    </mitre>
+  </rule>
+
+</group>

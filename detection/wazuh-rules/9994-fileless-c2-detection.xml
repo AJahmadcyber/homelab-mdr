@@ -1,0 +1,127 @@
+<!--
+  Stage 1 — Fileless Execution & C2 Beaconing Detection
+  homelab-mdr / Phase 7 GentleKiller adversary emulation
+
+  Three-layer behavioral detection — port-agnostic, language-agnostic,
+  encryption-agnostic. Catches the BEHAVIOR, not the payload.
+
+  Layer 1 (L10): Fileless loader signature — csc.exe spawned by PowerShell
+                 Fires at T+0, first second of execution
+                 Behavioral: any Add-Type/C# in-memory loader hits this
+                 regardless of payload, port, or C2 framework
+
+  Layer 2 (L10): PowerShell outbound TCP to external IP
+                 Fires on first callback (~75 seconds)
+                 Behavioral: LOLBin (powershell.exe) initiating raw TCP
+                 outbound is unusual for legitimate administrative scripts
+                 Infra allowlist: skips pfSense (10.10.10.1) and siem
+                 (10.10.10.10) to cut known-good internal traffic FPs
+
+  Layer 3 (L14): Beaconing confirmed — same destination × 3 in 3 minutes
+                 Fires after third callback (~3 minutes)
+                 Behavioral: periodic heartbeat pattern = C2 confirmed
+                 Port-agnostic: any port triggers (443, 8443, 4444, …)
+                 Encryption-agnostic: detects timing pattern, not content
+                 Language-agnostic: Go, Python, C++, .NET all trigger
+
+  False-positive rationale:
+    L1 alone: legitimate .NET tools use Add-Type → L10, needs context
+    L2 alone: legitimate PS scripts do outbound (WinRM, etc.) → L10
+    L3 (freq): same IP × 3 in 3 min from PS is extremely rare legitimate
+               behavior → L14 high confidence, safe to page on-call
+    L1 + L2 same session: near-zero FP rate → operator should contain
+
+  MITRE ATT&CK coverage:
+    T1059.001 — Command and Scripting Interpreter: PowerShell
+    T1055     — Process Injection (in-memory shellcode via VirtualAlloc)
+    T1071.001 — Application Layer Protocol: Web Protocols (C2 callback)
+
+  References:
+    Cyberdefenders fileless detection guide (May 2026)
+    Wazuh detecting-peaklight-malware blog (clrjit.dll pattern)
+    Wazuh sysmon_id_3 rules (92101 base, built on top)
+    SigmaHQ T1059.001 rules (PowerShell outbound correlation)
+-->
+
+<group name="windows,sysmon,fileless,c2,stage1,phase7">
+
+  <!-- ================================================================
+       LAYER 1 — IMMEDIATE — Fileless Loader (Add-Type / C# compilation)
+       Base: sysmon_event1 (EID 1 process creation)
+       Trigger: csc.exe (C# compiler) spawned directly by powershell.exe
+       Why this matters: powershell.exe → csc.exe is the Add-Type
+       fingerprint. Any fileless loader that compiles Win32 API stubs
+       (VirtualAlloc, CreateThread, WriteProcessMemory) in memory will
+       hit this rule regardless of the shellcode or C2 framework used.
+       FP mitigation: legitimate .NET dev tools do trigger Add-Type, so
+       level 10 (investigate) rather than immediate containment.
+       ================================================================ -->
+  <rule id="100330" level="10">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.image" type="pcre2">(?i)\\csc\.exe$</field>
+    <field name="win.eventdata.parentImage" type="pcre2">(?i)\\powershell\.exe$|\\pwsh\.exe$</field>
+    <description>FILELESS LOADER: PowerShell spawned C# compiler csc.exe — Add-Type in-memory compilation detected on $(win.system.computer). Possible shellcode loader (VirtualAlloc+CreateThread pattern) T1059.001 T1055</description>
+    <group>fileless_loader,</group>
+    <mitre>
+      <id>T1059.001</id>
+      <id>T1055</id>
+    </mitre>
+  </rule>
+
+  <!-- ================================================================
+       LAYER 2 — FAST — PowerShell outbound TCP (any port, any ext. IP)
+       Base: rule 92101 (powershell.exe + TCP, already filtered by Wazuh)
+       Added: initiated=true (outbound only, not inbound connections)
+       Added: infra allowlist — excludes pfSense gateway (10.10.10.1)
+              and siem (10.10.10.10) to suppress known-good internal FPs
+              while keeping 10.10.10.2 (attacker/C2) visible
+       Why behavioral: legitimate PowerShell scripts (WinRM, WSUS, etc.)
+       typically use well-known ports and connect to internal infra;
+       raw TCP initiated by PS to an unknown destination is suspicious.
+       Detection is port-agnostic: fires on 443, 8443, 4444, any port.
+       ================================================================ -->
+  <rule id="100331" level="10">
+    <if_sid>92101</if_sid>
+    <field name="win.eventdata.initiated">true</field>
+    <field name="win.eventdata.destinationIp" negate="yes" type="pcre2">^(10\.10\.10\.1$|10\.10\.10\.10$|127\.|::1$|0:0:0:0:0:0:0:1$)</field>
+    <description>LOLBin OUTBOUND: PowerShell initiated TCP connection to $(win.eventdata.destinationIp):$(win.eventdata.destinationPort) on $(win.system.computer) — suspicious outbound from script engine, possible C2 first callback T1059.001 T1071.001</description>
+    <group>lolbin_outbound,</group>
+    <mitre>
+      <id>T1059.001</id>
+      <id>T1071.001</id>
+    </mitre>
+  </rule>
+
+  <!-- ================================================================
+       LAYER 3 — CONFIRMATION — C2 Beaconing (periodic heartbeat)
+       Base: if_matched_sid 100331 (PowerShell outbound, layer 2)
+       Trigger: SAME powershell.exe process contacting SAME destination
+                IP 3+ times within 3 minutes
+       Why this confirms C2: legitimate PS scripts that make outbound
+       connections (WinRM, API calls) do not repeat to the same IP
+       3 times in 3 minutes with regular intervals. This timing pattern
+       is the heartbeat of a C2 beacon (Sliver default: every 30–90s).
+       Endpoint-scoped: correlates on IP+port so a staging download on
+       one port is not conflated with C2 heartbeat on another. Layer 2
+       stays port-agnostic; layer 3 confirms a single sustained channel.
+       Encryption-agnostic: we detect the TIMING pattern, not content —
+       TLS/mTLS encrypted beacons are fully visible to this rule because
+       the network connection event (EID 3) fires before TLS handshake.
+       Language-agnostic: Go (Sliver/GentleKiller), Python, C++, .NET
+       beacons all produce the same EID 3 pattern.
+       ================================================================ -->
+  <rule id="100332" level="14" frequency="3" timeframe="180">
+    <if_matched_sid>100331</if_matched_sid>
+    <same_field>win.eventdata.destinationIp</same_field>
+    <same_field>win.eventdata.destinationPort</same_field>
+    <same_field>win.eventdata.image</same_field>
+    <description>CRITICAL C2 BEACONING CONFIRMED: PowerShell contacted same destination 3+ times in 3 minutes — $(win.eventdata.image) beaconing to $(win.eventdata.destinationIp):$(win.eventdata.destinationPort) on $(win.system.computer). Consistent with Sliver/CobaltStrike/GentleKiller C2 heartbeat. Contain host immediately T1071.001 T1059.001 T1055</description>
+    <group>c2_confirmed,</group>
+    <mitre>
+      <id>T1071.001</id>
+      <id>T1059.001</id>
+      <id>T1055</id>
+    </mitre>
+  </rule>
+
+</group>
