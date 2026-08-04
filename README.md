@@ -59,13 +59,14 @@ Every custom rule is mapped to a MITRE ATT&CK technique, with IDs namespaced by 
 | Technique | Detection | Layer | Rule IDs |
 | --- | --- | --- | --- |
 | T1046 — Network Service Discovery | Custom Suricata SYN-scan signatures → Wazuh MITRE rules | Network | Suricata 1000001/1000002 → 100300–100304 |
+| T1190 — Exploit Public-Facing Application | Fortinet CVE-2024-55591 auth-bypass URI pattern at the edge (HTTP only — TLS hides the URI) | Network | Suricata sid 100350 → 100308 |
 | T1048 — Exfiltration Over Alternative Protocol | Suricata long-subdomain DNS heuristic → Wazuh | Network (DNS) | Suricata 1000003 → 100305 |
 | T1071.004 — Application Layer Protocol: DNS | Behavioral C2 beaconing (rate-based, per eTLD+1) via custom SIEM-layer analyzer | SIEM (behavioral) | 100306 / 100307 |
 | T1059.001 — PowerShell | Script Block Logging (Event 4104) obfuscation patterns | Endpoint | 100100–100102 |
 | T1003.001 — LSASS Memory | comsvcs.dll MiniDump detected via **process command line (Sysmon EID 1)** — EID 10 is dropped by event-size limits, so EID 1 is the reliable path | Endpoint | 100311 |
 | Credential theft — Mimikatz | Mimikatz signatures in PowerShell 4104 script blocks | Endpoint | 100312 |
 | Credential theft — browser stores | Browser credential-store access (esentutl / Login Data) | Endpoint | 100313 |
-| T1562.001 / T1611 / T1610 / T1548.003 / T1098 / T1543.002 / T1562.004 | SIEM self-monitoring (auditd) — tamper detection for the monitoring stack | SIEM host | 100200–100205 |
+| T1562.001 / T1611 / T1610 / T1548.003 / T1098 / T1543.002 / T1562.004 | SIEM self-monitoring (auditd) — tamper detection for the monitoring stack | SIEM host | 100200–100208 |
 
 
 ### Phase 7 — adversary emulation: attack commands per stage
@@ -74,9 +75,9 @@ Each stage is driven by real red-team tooling from the attacker host (ThinkPad, 
 
 | Sub-phase | Tool | Attack command (attacker side) | Fires |
 | --- | --- | --- | --- |
-| 7-A Initial Access | nmap 7.95 | `nmap -sS -Pn 10.10.10.1` (connect-mode SYN scan across pfSense LAN) | 100301 / 100304 |
+| 7-A Initial Access | nmap 7.95 | `nmap -sT -Pn 10.10.10.1` (connect-mode scan — no Npcap on the host, so `-sS` is unavailable) | 100301 / 100304 |
 | 7-A Initial Access | Nuclei 3.11.0 | `nuclei -u https://10.10.10.1` (full 5106-template scan) | 100303 / 100300 |
-| 7-A Initial Access | curl | `curl -k "https://10.10.10.1/api/v2/cmdb/system/admin?local_access_token=1"` (CVE-2024-55591 auth-bypass URI pattern) | 100350 |
+| 7-A Initial Access | curl | `curl "http://10.10.10.1/api/v2/cmdb/system/admin?local_access_token=1"` (CVE-2024-55591 auth-bypass URI pattern — HTTP only: the rule matches `http.uri`, which TLS encrypts) | Suricata sid 100350 → Wazuh 100308 |
 | 7-B Fileless → C2 | Sliver C2 v1.7.3 | `execute -- powershell.exe -EncodedCommand <base64>` — in-memory reflective loader (`DownloadData` → `VirtualAlloc` → `CreateThread`), no disk write | 100330 / 100331 / 100332 |
 | 7-C Persistence | Sliver C2 v1.7.3 | `registry write --hive HKCU --type string "Software\Microsoft\Windows\CurrentVersion\Run\<name>" "powershell.exe -WindowStyle Hidden -nop -enc <base64>"` — Registry API, not reg.exe | 100334 / 100336 |
 
@@ -172,13 +173,17 @@ homelab-mdr/
 ├── README.md
 ├── homelab-mdr-session-log.md          # phase-by-phase build journal
 ├── detection/
-│   ├── wazuh-rules/                     # custom Wazuh XML rules
-│   │   ├── 9997-suricata-mitre.xml      # 100300–100307 (Suricata + DNS)
-│   │   ├── 9998-siem-self-monitoring.xml# 100200–100205 (SIEM tampering)
-│   │   ├── 9998-credential-access.xml   # 100310–100313 (LSASS / Mimikatz / stealer)
+│   ├── wazuh-rules/                     # custom Wazuh XML rules (numeric prefix = load order)
+│   │   ├── 9992-fp-suppression.xml      # 100390 (surgical FP tuning)
+│   │   ├── 9993-persistence-detection.xml # 100333–100338 (ASEP, writer-agnostic)
+│   │   ├── 9994-fileless-c2-detection.xml # 100330–100332 (in-memory loader, beaconing)
+│   │   ├── 9995-credential-access.xml   # 100310–100313 (LSASS / Mimikatz / stealer)
+│   │   ├── 9996-endpoint-discovery.xml  # 100320 (scanner cmdline)
+│   │   ├── 9997-suricata-mitre.xml      # 100300–100308 (Suricata + DNS + edge CVE)
+│   │   ├── 9998-siem-self-monitoring.xml# 100200–100208 (SIEM tampering)
 │   │   └── 9999-windows-powershell.xml  # 100100–100102 (PowerShell 4104)
 │   ├── suricata-rules/                  # custom Suricata signatures
-│   │   ├── custom.rules                 # sid 1000001/1000002 (T1046), 1000003 (T1048)
+│   │   ├── custom.rules                 # sid 1000001/1000002 (T1046), 1000003 (T1048), 100350 (CVE-2024-55591)
 │   │   └── disablesid.conf              # sid 26470 (broken community rule)
 │   ├── dns-analyzer/                    # behavioral C2 analyzer
 │   │   └── c2-detect.py                 # rate-based DNS beaconing detector
@@ -191,17 +196,21 @@ homelab-mdr/
 ├── soar/                                # Phase 6 SOAR (triage + containment)
 │   ├── n8n/
 │   │   ├── docker-compose.yml           # n8n container (isolated)
-│   │   └── workflow-wazuh-soar-triage.json  # triage + block + ticket flow
+│   │   ├── wazuh-soar-triage.json       # alert → enrich → contain → classified ticket
+│   │   └── phishing-triage-cortex-enrichment.json  # .eml → enrich → signal scoring
+│   ├── cortex/                          # Cortex + Elasticsearch (secrets redacted)
+│   │   ├── docker-compose.yml
+│   │   ├── application.conf             # pinned secret key (HOCON mount)
+│   │   └── README.md                    # analyzer setup + org/user bootstrap
+│   ├── thehive/                         # TheHive 5 (local mode: bdb + Lucene)
+│   │   ├── docker-compose.yml
+│   │   └── application.conf
 │   ├── wazuh-integration/
 │   │   ├── custom-n8n                   # Wazuh → n8n forwarder script
 │   │   └── ossec-integration-block.xml  # <integration> block (level>=10)
-│   ├── scripts/                         # 6-B containment + DNS pipeline
-│   │   ├── soar-block.py                # host-isolation blocker (allowlist + circuit breaker)
-│   │   ├── dns-pull.sh                  # pull DNS queries from pfSense
-│   │   ├── c2-detect.py                 # rate-based DNS C2 detector
-│   │   └── cron-dns-pipeline            # cron: pull && analyze, every minute
-│   └── pfsense-api/
-│       └── README.md                    # REST API setup + mechanics
+│   └── scripts/                         # 6-B containment
+│       ├── soar-block.py                # host-isolation blocker (allowlist + circuit breaker)
+│       └── cron-dns-pipeline            # cron: pull && analyze, every minute
 └── docs/
     ├── architecture.svg / architecture.png
     └── evidence/                        # screenshots per phase
