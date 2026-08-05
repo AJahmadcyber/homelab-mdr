@@ -1,0 +1,65 @@
+<!--
+  Phase 7 - Stage 4f: tampering with the controls that PREVENT BYOVD.
+
+  This fires one step EARLIER in the chain than the driver load. Recent
+  tradecraft (documented Feb 2026) disables HVCI, the vulnerable-driver
+  blocklist or Credential Guard first, then loads the driver into a system that
+  no longer objects. Catching the disable is catching the attack before it has
+  kernel access.
+
+  Sensor note: sysmon-modular covers Defender's registry keys thoroughly but did
+  not reference HVCI, the blocklist, or Credential Guard at all - the controls
+  specific to BYOVD. Those paths were added to the RegistryEvent include list.
+  Third time in this phase that the shipped config filtered exactly the
+  telemetry a BYOVD detection needs: verify the sensor before writing the rule.
+
+  Field structure confirmed from live EID 13 events:
+    win.eventdata.targetObject = HKLM\System\CurrentControlSet\Control\CI\Config\VulnerableDriverBlocklistEnable
+    win.eventdata.details      = the written value (DWORD 0 = control disabled)
+    win.eventdata.image        = the writer
+
+  Two findings that shape the regex:
+    - Case is NOT normalised as expected ("HKLM\System", not "HKLM\SYSTEM"),
+      so matching must be case-insensitive.
+    - targetObject ends with the VALUE name, not the key, so the control name
+      appears mid-string - anchoring on the end would never match.
+    - Backslashes arrive escaped, hence [\\]+ rather than \\.
+    - targetObject ends AT the value name with no trailing separator, so the
+      pattern must close with ([\\]+|$) - requiring a trailing backslash means
+      the rule can never match. Cost a full debugging cycle to find.
+
+  Anchor: sysmon_event_13 (WITH the underscore before the digit, unlike
+  sysmon_event6 - the naming is inconsistent across EIDs and must be read from a
+  live default rule, never assumed).
+
+  NOT 92300/92302: those were copied over from the Stage 1b persistence rules,
+  but 92300 is not a generic EID 13 rule - its own pcre2 restricts it to
+  CurrentVersion\Run paths. A code-integrity key never enters that branch, so
+  anything inheriting from it stays silent no matter how correct its regex is.
+  Verified from the shipped rule text rather than inferred.
+-->
+<group name="sysmon,windows,byovd,">
+
+  <rule id="100380" level="13">
+    <if_group>sysmon_event_13</if_group>
+    <field name="win.eventdata.targetObject" type="pcre2">(?i)[\\]+(DeviceGuard[\\]+Scenarios[\\]+HypervisorEnforcedCodeIntegrity|DeviceGuard[\\]+EnableVirtualizationBasedSecurity|CI[\\]+Config[\\]+VulnerableDriverBlocklistEnable|CI[\\]+Config[\\]+HVCIMATRequired)([\\]+|$)</field>
+    <description>BYOVD prevention tampering: kernel code-integrity control modified - $(win.eventdata.targetObject) set to $(win.eventdata.details) by $(win.eventdata.image)</description>
+    <mitre>
+      <id>T1562.001</id>
+      <id>T1553.006</id>
+    </mitre>
+    <group>impair_defenses,byovd,code_integrity,</group>
+  </rule>
+
+  <rule id="100381" level="13">
+    <if_group>sysmon_event_13</if_group>
+    <field name="win.eventdata.targetObject" type="pcre2">(?i)[\\]+(Lsa[\\]+LsaCfgFlags|Lsa[\\]+RunAsPPL|CodeIntegrity[\\]+TestSigning)([\\]+|$)</field>
+    <description>Credential/signing protection tampering: $(win.eventdata.targetObject) set to $(win.eventdata.details) by $(win.eventdata.image)</description>
+    <mitre>
+      <id>T1562.001</id>
+      <id>T1553.006</id>
+    </mitre>
+    <group>impair_defenses,byovd,code_integrity,</group>
+  </rule>
+
+</group>
