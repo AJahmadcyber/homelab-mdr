@@ -28,6 +28,16 @@ STATE = "/opt/secwatch/state.json"
 OUT = "/var/log/secwatch/watchdog.log"
 
 STALE_SECONDS = 90      # 3 missed heartbeats at 30s
+
+# Off-host liveness source. The endpoint can lie about itself once an attacker
+# owns its kernel, but it cannot hide traffic from a sensor it does not control.
+# DNS is the right channel to read: it is the one protocol that MUST traverse
+# the gateway, so pfSense sees it even for same-subnet hosts whose other traffic
+# never reaches the firewall (verified: mTLS to 10.10.10.2 is invisible, DNS to
+# 10.10.10.1 is fully visible).
+DNS_STREAM = "/var/log/dns-analyzer/dns-queries.stream"
+AGENT_IPS = {"win-ep": "10.10.10.20"}
+NET_LOOKBACK_SECONDS = 180
 MONITORED = ["win-ep"]
 
 def read_tail(n=400):
@@ -85,6 +95,36 @@ def to_epoch(ts):
     except Exception:
         return 0
 
+def network_alive(ip, since_epoch):
+    """Did this host generate DNS traffic after `since_epoch`?
+
+    Reads the tail of the DNS stream rather than the whole file - the question
+    is only ever about the last few minutes, and the stream grows to tens of MB.
+    Returns (alive, last_query_name, seconds_ago) or (False, None, None).
+    """
+    try:
+        out = subprocess.run(["tail", "-n", "400", DNS_STREAM],
+                             capture_output=True, text=True, timeout=15).stdout
+    except Exception:
+        return (False, None, None)
+
+    newest = None
+    for ln in out.splitlines():
+        if f'"src_ip":"{ip}"' not in ln:
+            continue
+        try:
+            q = json.loads(ln)
+        except Exception:
+            continue
+        ts = to_epoch(q.get("timestamp", ""))
+        if ts > since_epoch and (newest is None or ts > newest[0]):
+            newest = (ts, (q.get("dns") or {}).get("rrname"))
+
+    if newest:
+        return (True, newest[1], int(time.time() - newest[0]))
+    return (False, None, None)
+
+
 def emit(payload):
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "a") as f:
@@ -113,15 +153,36 @@ def main():
         alerted = state.get(agent, {}).get("alerted", False)
 
         if age > STALE_SECONDS and not graceful and not alerted:
-            emit({
-                "event": "SECWATCH_SILENT",
+            # Silence alone is ambiguous: a powered-off machine is silent too.
+            # The discriminator is whether the NETWORK still sees the host. Quiet
+            # on both channels = switched off. Quiet only on the endpoint channel
+            # while still generating traffic = something silenced the agent.
+            ip = AGENT_IPS.get(agent)
+            alive, last_q, q_ago = (False, None, None)
+            if ip:
+                alive, last_q, q_ago = network_alive(
+                    ip, now - max(NET_LOOKBACK_SECONDS, age))
+
+            payload = {
+                "event": "SECWATCH_KILLED" if alive else "SECWATCH_SILENT",
                 "agent": agent,
                 "last_seen": hb["ts"],
                 "silent_seconds": int(age),
                 "last_seq": hb["fields"].get("seq"),
                 "graceful_shutdown": False,
-                "note": "heartbeat stopped without a graceful-shutdown marker",
-            })
+                "network_alive": alive,
+            }
+            if alive:
+                payload["last_dns_query"] = last_q
+                payload["last_dns_seconds_ago"] = q_ago
+                payload["note"] = (
+                    "endpoint telemetry stopped while the host is still generating "
+                    "network traffic - the agent was silenced, the machine is running")
+            else:
+                payload["note"] = (
+                    "heartbeat stopped and no network activity observed - "
+                    "consistent with the host being powered off, but unconfirmed")
+            emit(payload)
             state.setdefault(agent, {})["alerted"] = True
 
         elif age > STALE_SECONDS and graceful and not alerted:

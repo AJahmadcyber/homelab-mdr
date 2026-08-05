@@ -85,4 +85,33 @@
     <group>secwatch_recovered,</group>
   </rule>
 
+  <!-- The surviving channel, completed.
+
+       100363 says the endpoint went quiet without warning - which is ambiguous,
+       because a machine that was switched off is quiet too. This rule resolves
+       that ambiguity from OFF the host: pfSense still sees the machine issuing
+       DNS queries while its agent is silent.
+
+       DNS is the right channel to read. It is the one protocol that must
+       traverse the gateway, so the firewall sees it even for same-subnet hosts
+       whose other traffic never reaches it - verified empirically here: the
+       implant's mTLS channel to 10.10.10.2 is invisible to the sensor, DNS to
+       10.10.10.1 is fully visible.
+
+       This is the detection with nothing to kill. An attacker holding Ring 0 on
+       the endpoint can forge the heartbeat, but cannot suppress a calculation
+       made on the SIEM, and cannot hide traffic from a sensor on the firewall.
+       Going quieter only makes the signal louder. -->
+
+  <rule id="100366" level="15">
+    <if_sid>100362</if_sid>
+    <field name="event">^SECWATCH_KILLED$</field>
+    <description>Endpoint $(agent) telemetry silenced while the host is still network-alive - agent kill (silent $(silent_seconds)s, last DNS $(last_dns_query) $(last_dns_seconds_ago)s ago)</description>
+    <mitre>
+      <id>T1562.001</id>
+      <id>T1562.008</id>
+    </mitre>
+    <group>secwatch_killed,impair_defenses,byovd,</group>
+  </rule>
+
 </group>
