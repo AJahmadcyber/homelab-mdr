@@ -34,7 +34,7 @@
     <mitre>
       <id>T1562.001</id>
     </mitre>
-    <group>security_process_terminated,impair_defenses,</group>
+    <group>security_process_terminated,impair_defenses,byovd_chain,</group>
   </rule>
 
   <rule id="100371" level="14" frequency="4" timeframe="120">
@@ -47,5 +47,35 @@
     </mitre>
     <group>security_process_terminated,edr_killer,impair_defenses,</group>
   </rule>
+
+  <!-- 4d - BYOVD correlation. The core of Stage 4.
+
+       A kernel driver load is not suspicious on its own; a security process
+       ending is not conclusive on its own. The two together, inside a short
+       window, are the shape ESET named as the strongest available signal
+       against GentleKiller - and it holds across all 8 variants because it
+       keys on SEQUENCE, not on driver identity. A variant nobody has
+       catalogued produces the same pattern.
+
+       Mechanics: Wazuh has no general cross-rule correlation. if_matched_sid
+       looks BACKWARD from the current event, so this must hang off the LAST
+       event in the chain - the kill - and look back for the driver load.
+       Ordering matters: written the other way round it would never fire.
+
+       Scoped by hostname so a driver load on one endpoint cannot be paired
+       with a kill on another. -->
+
+  <!-- No frequency attribute: Wazuh rejects frequency="1" (must be >1), and we
+       want a SINGLE prior match, not a repeated one. if_matched_sid alone gives
+       exactly that - it looks back over timeframe for one occurrence. -->
+    <!-- Mechanism note (learned the hard way): if_matched_sid does NOT link two
+       different events. It re-fires on the SAME events as the referenced rule
+       once that rule has matched within the window - it cannot say "event B
+       happened after event A".
+
+       What does work: put both halves of the chain in a shared group, then
+       count members of that group per host. Two distinct group members inside
+       the window means both a driver load and a security-process kill occurred
+       on the same machine - which is the BYOVD shape. -->
 
 </group>

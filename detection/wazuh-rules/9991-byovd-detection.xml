@@ -49,7 +49,7 @@
       <id>T1068</id>
       <id>T1543.003</id>
     </mitre>
-    <group>driver_load,byovd,</group>
+    <group>driver_load,byovd,byovd_chain,</group>
   </rule>
 
   <rule id="100342" level="12">
