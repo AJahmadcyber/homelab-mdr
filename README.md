@@ -31,6 +31,9 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | ↳ 7-A — Initial Access | Edge exploitation: CVE-2024-55591 (FortiOS auth-bypass) URI signature; nmap + Nuclei recon — Suricata rules | ✅ Implemented |
 | ↳ 7-B — Fileless Execution → C2 | In-memory Sliver beacon via PowerShell reflective loader (no disk write); LOLBin outbound + beaconing confirm | ✅ Implemented |
 | ↳ 7-C — Persistence | ASEP autostart write, writer-agnostic — fires even when the implant writes via the Registry API, not reg.exe | ✅ Implemented |
+| ↳ 7-D — Defense Evasion / BYOVD | Kernel driver load from user-writable paths, security-tooling termination, code-integrity tampering, and the correlation that ties a driver load to a kill | ✅ Implemented |
+| ↳ L4 — Resilient detection | The surviving channel: endpoint heartbeat + off-host network liveness, so a silenced agent is told apart from a machine that was switched off | ✅ Implemented |
+| ↳ SIEM self-health | Detects the SIEM's own engine dying silently (a bad rule file kills analysisd while the container still reports Up) and recovers it | ✅ Implemented |
 | 8 — Coverage engine | Atomic Red Team chains, automated detection scoring, live MITRE ATT&CK Navigator layer | ⏳ Roadmap |
 
 ---
@@ -66,6 +69,12 @@ Every custom rule is mapped to a MITRE ATT&CK technique, with IDs namespaced by 
 | T1003.001 — LSASS Memory | comsvcs.dll MiniDump detected via **process command line (Sysmon EID 1)** — EID 10 is dropped by event-size limits, so EID 1 is the reliable path | Endpoint | 100311 |
 | Credential theft — Mimikatz | Mimikatz signatures in PowerShell 4104 script blocks | Endpoint | 100312 |
 | Credential theft — browser stores | Browser credential-store access (esentutl / Login Data) | Endpoint | 100313 |
+| T1068 / T1543.003 — BYOVD driver load | Kernel driver loaded from a user-writable path — keys on **path, not signer**, because a validly signed vulnerable driver is the technique, not an exception to it | Endpoint | 100340–100343 |
+| T1562.001 — Security tooling terminated | Termination of a resident security service, plus a frequency rule for the mass-kill shape | Endpoint | 100370 / 100371 |
+| T1068 + T1562.001 — **BYOVD chain** | Driver load followed by a security-tooling kill on the same host inside 5 minutes — the pair is the finding; correlated in the SOAR layer, not the rule engine | SOAR | n8n correlation node |
+| T1562.001 / T1553.006 — Code-integrity tampering | HVCI, vulnerable-driver blocklist, Credential Guard or TestSigning modified — fires one step *earlier* than the driver load | Endpoint | 100380 / 100381 |
+| T1562.001 / T1562.008 — **Agent silenced** | Endpoint telemetry stops while the firewall still sees the host issuing DNS — a killed agent, told apart from a powered-off machine | SIEM + Network | 100359–100366 |
+| T1562.001 — SIEM engine down | The rule engine itself stops evaluating (bad rule file kills analysisd; container still reports Up) — detected and auto-recovered | SIEM host | 100395–100399 |
 | T1562.001 / T1611 / T1610 / T1548.003 / T1098 / T1543.002 / T1562.004 | SIEM self-monitoring (auditd) — tamper detection for the monitoring stack | SIEM host | 100200–100208 |
 
 
@@ -79,6 +88,10 @@ Each stage is driven by real red-team tooling from the attacker host (ThinkPad, 
 | 7-A Initial Access | Nuclei 3.11.0 | `nuclei -u https://10.10.10.1` (full 5106-template scan) | 100303 / 100300 |
 | 7-A Initial Access | curl | `curl "http://10.10.10.1/api/v2/cmdb/system/admin?local_access_token=1"` (CVE-2024-55591 auth-bypass URI pattern — HTTP only: the rule matches `http.uri`, which TLS encrypts) | Suricata sid 100350 → Wazuh 100308 |
 | 7-B Fileless → C2 | Sliver C2 v1.7.3 | `execute -- powershell.exe -EncodedCommand <base64>` — in-memory reflective loader (`DownloadData` → `VirtualAlloc` → `CreateThread`), no disk write | 100330 / 100331 / 100332 |
+| 7-D BYOVD | sc.exe | `copy <signed driver> C:\Windows\Temp\evilqos.sys` then `sc create EvilQoS type= kernel binPath= \??\C:\Windows\Temp\evilqos.sys` + `sc start` — a Microsoft-signed driver staged in a temp path (the `\??\` prefix is required; a plain `C:\` path fails silently) | 100341 |
+| 7-D BYOVD | PowerShell | terminate a resident security process (`Stop-Process -Force`) within 5 min of the driver load | 100370 → BYOVD chain ticket |
+| 7-D BYOVD | reg.exe | `reg add "HKLM\SYSTEM\CurrentControlSet\Control\CI\Config" /v VulnerableDriverBlocklistEnable /t REG_DWORD /d 0 /f` — disabling the control that would block the driver | 100380 |
+| L4 Resilient | sc.exe | `sc stop WazuhSvc` while the host keeps issuing DNS queries through the gateway | 100366 |
 | 7-C Persistence | Sliver C2 v1.7.3 | `registry write --hive HKCU --type string "Software\Microsoft\Windows\CurrentVersion\Run\<name>" "powershell.exe -WindowStyle Hidden -nop -enc <base64>"` — Registry API, not reg.exe | 100334 / 100336 |
 
 **Why the persistence command is the differentiator:** Sliver's `registry write` uses the Windows Registry API from inside the implant, so Sysmon EID 13 records `image=powershell.exe`, not `reg.exe`. Wazuh's built-in Run-key rules are all bound to `image=reg.exe` and go silent; the custom rule inherits from `92300`/`92302` and fires on *what* is persisted, catching the write regardless of writer.
@@ -174,6 +187,11 @@ homelab-mdr/
 ├── homelab-mdr-session-log.md          # phase-by-phase build journal
 ├── detection/
 │   ├── wazuh-rules/                     # custom Wazuh XML rules (numeric prefix = load order)
+│   │   ├── 9987-siem-health.xml         # 100395–100399 (engine availability)
+│   │   ├── 9988-ci-tampering.xml        # 100380/100381 (HVCI, blocklist, PPL)
+│   │   ├── 9989-edr-killer.xml          # 100370/100371 (security tooling killed)
+│   │   ├── 9990-secwatch.xml            # 100359–100366 (L4 surviving channel)
+│   │   ├── 9991-byovd-detection.xml     # 100340–100343 (driver load)
 │   │   ├── 9992-fp-suppression.xml      # 100390 (surgical FP tuning)
 │   │   ├── 9993-persistence-detection.xml # 100333–100338 (ASEP, writer-agnostic)
 │   │   ├── 9994-fileless-c2-detection.xml # 100330–100332 (in-memory loader, beaconing)
@@ -185,6 +203,12 @@ homelab-mdr/
 │   ├── suricata-rules/                  # custom Suricata signatures
 │   │   ├── custom.rules                 # sid 1000001/1000002 (T1046), 1000003 (T1048), 100350 (CVE-2024-55591)
 │   │   └── disablesid.conf              # sid 26470 (broken community rule)
+│   ├── secwatch/                        # L4 — the surviving channel
+│   │   ├── agent/                       # endpoint heartbeat + shutdown announce
+│   │   ├── siem/                        # watchdog + systemd timer
+│   │   └── README.md                    # design, limits, verified behaviour
+│   ├── siem-health/                     # detects the engine dying silently
+│   ├── sysmon/                          # DriverLoad override + rationale
 │   ├── dns-analyzer/                    # behavioral C2 analyzer
 │   │   └── c2-detect.py                 # rate-based DNS beaconing detector
 │   └── pipeline/                        # collectors

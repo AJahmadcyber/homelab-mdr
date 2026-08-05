@@ -3,7 +3,7 @@
 > Build journal: SOC Detection Engineering Lab. From idea to full detection stack.
 > **GitHub:** https://github.com/AJahmadcyber/homelab-mdr
 
-**Last updated:** July 29, 2026 — Phase 6 CLOSED (6-A/6-B/6-C all implemented). Phase 7 (GentleKiller ransomware kill-chain) IN PROGRESS — Stage 1 (Credential Access) proven end-to-end; Stage 2 (Discovery) detection gap closed with new rule 100320.
+**Last updated:** August 5, 2026 — Phase 7 Stage 4 (Defense Evasion / BYOVD) CLOSED, including the L4 resilient layer. Sub-phases 7-A/7-B/7-C proven earlier; this session added driver-load, kill, correlation, code-integrity tampering, the surviving-channel detection, and a SIEM self-health monitor built after a real 6.5-hour outage.
 
 ---
 
@@ -575,3 +575,163 @@ HTTPS -- a critical SOC caveat.
   (driver-load + process-kill burst) — the core detection challenge.
 - Stages 4—7: Lateral Movement, C2 (rules exist), Impact (build behavioral
   shadow-copy-deletion + mass-encryption rules).
+
+---
+
+## Phase 7 — Stage 4 (Defense Evasion / BYOVD) — Full Record (2026-08-04 / 08-05)
+
+> Numbering note: this record uses the tactic-order numbering of
+> `docs/phase7-attack-scenario.md` (Stage 4 = Defense Evasion / BYOVD).
+> Earlier entries in this log used an older ad-hoc numbering where
+> "Stage 1" meant Credential Access. The design doc is authoritative.
+
+### What was built
+
+| Item | Rules | State |
+|---|---|---|
+| Sensor layer (DriverLoad, ProcessTerminate, RegistryEvent) | — | Reconfigured, volume measured |
+| 4a — kernel driver load | 100340–100343 | Proven |
+| 4b — kernel service install | 61138 (Wazuh default) | Already covered |
+| 4c — security-tooling termination | 100370, 100371 | Proven |
+| 4d — BYOVD correlation | SOAR node (n8n) | Proven |
+| 4f — code-integrity tampering | 100380, 100381 | Proven |
+| L4 — surviving channel | 100359–100366 | Proven |
+| SIEM self-health | 100395–100399 | Proven, unplanned |
+
+4e (LOLDrivers hash matching) was dropped by decision: the behavioural rules
+already catch the driver-load pattern regardless of identity, and hash lists
+only ever cover what is already catalogued.
+
+### The sensor was the real work
+
+Three separate times, sysmon-modular filtered out exactly the telemetry a BYOVD
+detection needs. None of it was visible from the rule side — the events simply
+did not exist.
+
+- **DriverLoad** shipped with signer-based exclusions (`Microsoft` / `Intel` +
+  valid signature). That is precisely the class BYOVD abuses: a legitimately
+  signed, vulnerable driver. Measured volume was **9 driver loads per full
+  boot**, so the exclusion saved nothing and cost the entire detection surface.
+  Now logs everything; selection happens in the rules, where it is reviewable.
+- **ProcessTerminate** was `include`-only on user-writable paths, so
+  terminations under `Program Files` — where security products live — were never
+  recorded. Extended to security-product paths and names. `System32` was
+  deliberately left out: 51 of 67 running processes live there.
+- **RegistryEvent** covered Defender's keys thoroughly but never referenced
+  HVCI, the vulnerable-driver blocklist, or Credential Guard.
+
+**Principle:** verify the sensor produces the event before writing the rule.
+A correct rule on absent telemetry is indistinguishable from a broken one.
+
+### 4d — correlation does not belong in the rule engine
+
+Five attempts to express "driver load THEN security-process kill" inside Wazuh:
+
+| Attempt | Result |
+|---|---|
+| `if_sid` + `if_matched_sid` | loaded, never fired |
+| `if_matched_sid` alone | re-fires on the same events; cannot link two |
+| `if_sid` + `if_matched_group` | rejected by analysisd |
+| `if_group` + `if_matched_group` | loaded, matched nothing |
+| bridge rule at level 0 | **broke 100370** by winning sibling precedence |
+
+`if_matched_*` is built for repetition patterns (repeated auth failures), not
+for chaining events of different kinds. Default rules like 40112 work because
+their groups sit at different levels of the rule tree; a custom rule cannot
+insert itself there without colliding.
+
+Moved to the SOAR layer, where it worked first try and carries more: the driver
+path, the killed process, and the gap between them all land in one ticket as
+evidence. BYOVD became its own tactic at the top of the priority table — the
+pair is the finding, not either half — always Critical/SLA 1h, with a
+rebuild-not-clean playbook and a separate dedup key space (without it the chain
+ticket collided with the plain kill ticket and TheHive silently dropped it).
+
+### L4 — the surviving channel
+
+Detects the **result** (security tooling gone), not the method — so it holds for
+techniques that do not exist yet.
+
+The endpoint states its own health every 30s, which turns absence into something
+measurable. A graceful shutdown announces itself first via a Scheduled Task on
+System event 1074, so silence *without* an announcement is a kill. The decision
+runs on the SIEM: an attacker holding the endpoint's kernel cannot suppress a
+calculation on a host they do not own.
+
+Silence alone was still ambiguous — a powered-off machine is silent too. Closed
+that from **off the host**: if pfSense still sees the endpoint issuing DNS
+queries while its agent is quiet, the agent was silenced and the machine is
+running.
+
+**Why DNS, empirically:** the implant's mTLS channel to 10.10.10.2 is invisible
+to Suricata (same-subnet, never routed through the gateway), while DNS to
+10.10.10.1 is fully visible — DNS is the one protocol that *must* traverse the
+gateway. Verified with `tcpdump` on em1 before designing anything.
+
+**Stated limit:** an attacker with kernel control can forge the heartbeat. That
+is why the off-host source exists. The host can lie about itself; it cannot hide
+traffic from a sensor it does not control.
+
+### The outage that produced a new capability
+
+A malformed rule (`frequency="1"`, which Wazuh rejects) took `wazuh-analysisd`
+down entirely — CRITICAL (1220) — and the container kept reporting **Up**,
+because Docker only watches PID 1. Detection was down for roughly **6.5 hours**.
+It was found by accident while debugging an unrelated rule, not by an alert.
+
+Every symptom pointed the wrong way: `Total rules enabled` stayed at the same
+number after each restart, which read as "the rule was rejected" when the truth
+was that nothing was reloading at all.
+
+Two things came out of it:
+
+1. **A health monitor** (`detection/siem-health/`) — checks the daemons
+   themselves every 60s from outside the container, alerts, and attempts exactly
+   one restart. Not a loop: a rule file that killed analysisd will kill it again,
+   and retrying forever hides the cause. Verified unattended: stopped 17:59:43,
+   detected 17:59:44, recovered 18:00:26.
+2. **A standing procedure** — every rule file is validated with
+   `wazuh-analysisd -t` *before* the restart that would load it. It caught a
+   syntax error on its very first use.
+
+### Lessons
+
+- **Container state is not service state.** `docker ps` says Up while the
+  daemons inside are dead. `wazuh-control status` is the real check. This is the
+  second instance of the same class this phase — the Suricata collector reported
+  `active` while crash-looping 244 times.
+- **A single bad rule file kills the whole engine, silently.** Not just its own
+  file — everything.
+- **`wazuh-analysisd -t` exits 0 even on CRITICAL.** Read the output text; the
+  exit code is not a signal.
+- **`92300` is not a generic EID 13 rule.** Its own pcre2 restricts it to
+  `CurrentVersion\Run`, so a code-integrity key never enters that branch. It was
+  copied over from the persistence rules and silently matched nothing.
+- **Group naming is inconsistent across EIDs** — `sysmon_event6` (no
+  underscore), `sysmon_event_13` (with one). Read it from a live default rule.
+- **`targetObject` ends AT the value name.** A pattern requiring a trailing
+  separator can never match; close with `([\\]+|$)`.
+- **`<field>` needs an explicit `type="pcre2"` for alternation.** Without it,
+  `^A(B|C)$` is a syntax error that takes down the engine.
+- **A multi-line XML comment inside a Sysmon include list kills that whole
+  section** while `Sysmon64 -c` still reports "Configuration validated". EID 12
+  and 13 dropped to zero and the persistence rules went blind. Edit the config
+  through the XML DOM, not by pasting text.
+- **Windows path fields arrive with escaped separators** — `[\\]+`, never
+  `\\`.
+- **A rule can fire for the wrong reason.** 100370 matched `MpCmdRun.exe`, a
+  routine Defender helper that exits on every scheduled scan. It looked like a
+  success. Read the alert content, not just its presence.
+- **100370 cannot detect the agent's own death** — the courier is the casualty.
+  A structural limit, not a rule defect, and exactly the gap L4 closes.
+
+### Open items
+
+- `logall_json` still on; snapshot still pending (ThinkPad disk space).
+- BYOVD ticket assessment line shows the winning technique name rather than the
+  chain description — cosmetic, one line.
+- L4 has no discriminator for a suspended VM yet (it goes quiet on both channels
+  and correctly resolves to SILENT, but `uptime` could sharpen it).
+- Cortex org key still hardcoded in the n8n code node.
+- Stage 5 (Lateral Movement) and Stage 7 (Impact) remain. Stage 7 needs a
+  snapshot first.
