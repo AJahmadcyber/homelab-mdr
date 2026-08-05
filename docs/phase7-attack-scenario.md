@@ -4,7 +4,7 @@
 > Design document for Phase 7: a full-lifecycle ransomware intrusion modeled on **The Gentlemen RaaS / GentleKiller** (ESET, June 2026), emulated stage-by-stage against the lab's detection → SOAR → TheHive pipeline.
 >
 > **Repo:** https://github.com/AJahmadcyber/homelab-mdr
-> **Status:** Design/reference document. Stages 0, 1 (execution + persistence), 2, 3 and 6 are implemented; stages 4, 5, 7 and the L4 resilient layer are the remaining Phase 7 build plan.
+> **Status:** Design/reference document. Stages 0, 1 (execution + persistence), 2, 3, 4 (BYOVD) and 6 are implemented, as is the **L4 resilient layer**. Remaining: stage 5 (Lateral Movement), stage 7 (Impact), and the deepening items (1a, 1b, X).
 
 ---
 
@@ -99,18 +99,18 @@ Each rule has a deliberately chosen *type* (behavioral / correlation / frequency
 | 1f | FP suppression: benign Base64-like reg add | Tuning | **rule 100390 — implemented** (drops 92041 on plain exe path) | ✅ |
 | 2 | Scanner cmdline | Behavioral | **rule 100320 — implemented** | ✅ |
 | 3 | LSASS dump | Behavioral | **rules 100310/311/313 — implemented** | ✅ |
-| 4a | Driver load, unusual path/signer | Behavioral | SigmaHQ `driver_load_vuln_drivers_names.yml` | ⏳ |
-| 4b | Kernel service install (7045) | Behavioral | SigmaHQ `service_install` + securityscriptographer 7045 | ⏳ |
-| 4c | Process-kill burst | Frequency | build (pattern of Wazuh 100627) | ⏳ |
-| **4d** | **BYOVD correlation (driver-load + kill-burst)** | **Correlation** | **original — the core detection challenge** | ⏳ |
-| 4e | Blocklist hash match | Hash | magicsword-io/LOLDrivers (Sysmon config ready) | ⏳ |
-| 4f | Tampering with blocklist / HVCI / Credential Guard | Behavioral | SigmaHQ + elastic (registry defense-impair rules, Feb 2026) | ⏳ |
+| 4a | Driver load, unusual path/signer | Behavioral | **rules 100340–100343 — implemented** (path-anchored, NOT signer-anchored: a validly signed vulnerable driver is the technique) | ✅ |
+| 4b | Kernel service install (7045) | Behavioral | **covered by Wazuh default rule 61138** — no custom rule needed | ✅ |
+| 4c | Process-kill burst | Frequency | **rules 100370/100371 — implemented**; single kill is already rare here (measured 8 terminations/hour), so 100370 fires on one and 100371 catches the mass-kill shape | ✅ |
+| **4d** | **BYOVD correlation (driver-load + kill-burst)** | **Correlation** | **implemented in the SOAR layer** — `if_matched_*` is built for repetition, not for chaining events of different kinds; five in-engine attempts failed and one broke the atomic rules | ✅ |
+| 4e | Blocklist hash match | Hash | **dropped by decision** — the behavioural rules catch the load regardless of driver identity; a hash list only ever covers what is already catalogued | ➖ |
+| 4f | Tampering with blocklist / HVCI / Credential Guard | Behavioral | **rules 100380/100381 — implemented**; fires one step *earlier* than the driver load | ✅ |
 | 5 | Lateral exec inbound to siem | Behavioral | SigmaHQ T1021 + agent 002 | ⏳ |
 | 6 | DNS beaconing | Rate-based | **rules 100306/307 — implemented** | ✅ |
 | 7a | Shadow-copy deletion | Behavioral | Wazuh official 100615–100622 | ⏳ |
 | 7b | Mass file encryption | Frequency | Wazuh official 100627 | ⏳ |
 | X | LOLBin out of context | Behavioral | SigmaHQ LOLBAS + GTFOBins→Wazuh | ⏳ |
-| **L4** | **Resilient: agent-silence + network-alive** | **Correlation** | **original — the surviving channel** | ⏳ |
+| **L4** | **Resilient: agent-silence + network-alive** | **Correlation** | **rules 100359–100366 — implemented**; DNS is the liveness channel because it is the one protocol that must traverse the gateway (mTLS to the C2 host is same-subnet and invisible to the sensor — verified) | ✅ |
 
 **The two original rules (4d and L4) are the differentiators** — they have no ready-made source because they are advanced correlation ideas:
 
@@ -125,10 +125,33 @@ Each rule has a deliberately chosen *type* (behavioral / correlation / frequency
 
 | Layer | Type | Components | Note |
 |---|---|---|---|
+| **L0 — Availability** | Build (unplanned) | Service-level health check outside the container, one-shot recovery, pre-flight rule validation | Added after a real 6.5-hour silent outage — a bad rule file kills the engine while the container reports healthy |
 | **L1 — Prevention** | Enable, don't build | Patch management; HVCI / Memory Integrity; Microsoft Vulnerable Driver Blocklist; ASR rule "Block abuse of exploited vulnerable signed drivers"; credential hygiene | Already exists in Windows — we enable it, we don't write kernel hooks. HVCI enforces blocklist decisions in a virtualization-isolated layer a Ring-0 attacker can't disable. |
 | **L2 — Detection** | Build | The behavioral rules of §5 + the cross-cutting threads | The core of our work |
 | **L3 — Response** | Exists | SOAR → TheHive ticket for every detection | The layer the real victims lacked |
 | **L4 — Resilient** | Build | Agent-silence + network-alive correlation (surviving channel) | Catches the kill even if L1–L3 are defeated |
+
+### L0 — Detection availability (unplanned, added 2026-08-05)
+
+Not in the original four-layer model, and it should have been. A malformed rule
+file took `wazuh-analysisd` down entirely (CRITICAL 1220) while the container
+kept reporting **Up** — Docker only supervises PID 1. Detection was down for
+roughly 6.5 hours and was found by accident, not by an alert.
+
+The engine that evaluates rules cannot alert on its own absence. So the check
+runs outside the container on a 60-second timer, alerts through a log the
+manager reads once healthy, and attempts exactly one restart — never a loop,
+because a rule file that killed analysisd will kill it again and retrying hides
+the cause.
+
+This is the same argument as L4 applied one level down: **the layer that watches
+must itself be watched from somewhere it does not control.** L4 asks whether the
+endpoint agent is alive; L0 asks whether the engine consuming its telemetry is.
+Rules 100395–100399, `detection/siem-health/`.
+
+A standing procedure came with it: every rule file is validated with
+`wazuh-analysisd -t` *before* the restart that would load it. It caught a syntax
+error on its first use.
 
 **Why L1 is "enable, don't build."** The idea of intercepting driver loads at the kernel and blocking unknown drivers before Ring 0 is exactly what HVCI + WDAC + the Driver Blocklist already do — proven, tested, no Ring-0 code from us. Writing our own kernel filter would be a weaker, more dangerous re-implementation. But the blocklist only catches *known* drivers; it does not stop advanced actors who weaponize a freshly disclosed PoC within days. That gap is precisely why L2 (behavioral, catches the unknown) and L4 (resilient, catches the kill) exist. Prevention is a control we *recommend in the ticket* as remediation — not something the SIEM enforces.
 
