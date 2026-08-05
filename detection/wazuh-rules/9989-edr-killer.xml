@@ -1,0 +1,51 @@
+<!--
+  Phase 7 - Stage 4c: termination of security tooling.
+
+  Sensor note: sysmon-modular ships ProcessTerminate as onmatch="include" with
+  only user-writable paths listed, so terminations under Program Files were
+  never recorded - exactly where security products live. The config now adds
+  security-product install paths and process names. System32 was deliberately
+  NOT opened: 51 of 67 running processes live there and the volume would be
+  noise, not signal.
+
+  Anchor: rule 61607 (0595-win-sysmon_rules.xml, level 0) matches EID 5 on
+  windows_eventchannel-decoded events. Group name is "sysmon_event5" - no
+  underscore before the digit. Confirmed from the live default rule.
+
+  Design: a single security process ending is already rare here - measured 8
+  terminations/hour across ALL monitored paths - so 100370 fires on one. The
+  frequency rule above it catches the mass-kill shape (GentleKiller terminates
+  400+ processes across 48 vendors), which is a different and worse event.
+
+  Limit: this covers the tooling installed on this host. A product that is not
+  present cannot be protected by naming it.
+-->
+<group name="sysmon,windows,edr_killer,">
+
+  <rule id="100370" level="12">
+    <if_sid>61607</if_sid>
+    <!-- Long-running service executables only. An earlier version matched the
+         Defender install path wholesale and fired on MpCmdRun.exe, which starts
+         and exits routinely for scheduled scans and definition updates - a
+         guaranteed daily false positive. Transient helper tools ending is
+         normal; a resident security SERVICE ending is not. -->
+    <field name="win.eventdata.image" type="pcre2">(?i)[\\]+(MsMpEng|MsSense|SenseIR|NisSrv|MsSecFlt|Sysmon64|Sysmon|wazuh-agent|ossec-agent)\.exe$</field>
+    <description>Security tooling terminated: $(win.eventdata.image) on $(win.system.computer)</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>security_process_terminated,impair_defenses,</group>
+  </rule>
+
+  <rule id="100371" level="14" frequency="4" timeframe="120">
+    <if_matched_sid>100370</if_matched_sid>
+    <same_field>win.system.computer</same_field>
+    <description>EDR-killer pattern: multiple security processes terminated on $(win.system.computer) within 2 minutes</description>
+    <mitre>
+      <id>T1562.001</id>
+      <id>T1489</id>
+    </mitre>
+    <group>security_process_terminated,edr_killer,impair_defenses,</group>
+  </rule>
+
+</group>
