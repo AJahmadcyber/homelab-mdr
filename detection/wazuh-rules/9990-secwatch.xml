@@ -1,0 +1,88 @@
+<!--
+  Phase 7 - security-tooling watchdog (Stage 4 / L4)
+
+  Detects the RESULT, not the method. An EDR killer can arrive via BYOVD, a
+  service stop, taskkill, or a kernel IOCTL from a driver nobody has catalogued
+  yet - the method keeps changing and every new one needs a new signature. What
+  does not change is the outcome: a security process that was running is gone.
+
+  A SIEM can only fire on events that arrive, never on ones that do not. So the
+  agent converts absence into presence: every 60s it reports the state of the
+  processes this lab actually depends on.
+
+    SECWATCH MsMpEng=UP Sysmon64=UP wazuh-agent=UP
+
+  Scope is deliberately limited to tooling present in this lab - Defender, the
+  telemetry source, and the agent that ships it. No coverage is claimed for
+  products that are not installed here.
+
+  Two layers:
+    100360 - a watchdog line arrives reporting DOWN  -> the agent is alive and
+             saw its neighbour die.
+    100361 - the watchdog line stops arriving        -> the agent itself is the
+             casualty. Correlate with network liveness (Suricata) to separate a
+             killed host from a powered-off one: a machine that is off goes
+             quiet on both channels, a compromised one only on the endpoint.
+-->
+<group name="secwatch,windows,">
+
+  <rule id="100359" level="0">
+    <decoded_as>ossec</decoded_as>
+    <match>SECWATCH </match>
+    <description>Security tooling watchdog heartbeat</description>
+    <group>secwatch_heartbeat,</group>
+  </rule>
+
+  <rule id="100360" level="12">
+    <if_sid>100359</if_sid>
+    <match>=DOWN</match>
+    <description>Security tooling DOWN on $(agent.name) - a monitored security process is no longer running</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>secwatch_down,impair_defenses,</group>
+  </rule>
+
+  <!-- L4 - the surviving channel.
+       The watchdog runs on the SIEM and reports what the endpoint could not:
+       that it went quiet. An attacker holding the endpoint cannot suppress a
+       calculation made on a host they do not own. Their only move is to stop
+       sending - which is the trigger itself.
+
+       Honest limit: an attacker with kernel control CAN forge the heartbeat and
+       keep reporting UP. That is why this pairs with an off-host liveness
+       source (Suricata on pfSense): the endpoint can lie about itself, but it
+       cannot hide traffic from a sensor it does not own. -->
+
+  <rule id="100362" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="event">^SECWATCH_</field>
+    <description>Endpoint watchdog event</description>
+    <group>secwatch_watchdog,</group>
+  </rule>
+
+  <rule id="100363" level="12">
+    <if_sid>100362</if_sid>
+    <field name="event">^SECWATCH_SILENT$</field>
+    <description>Endpoint $(agent) went silent without a graceful shutdown - possible agent kill (silent $(silent_seconds)s, last seq $(last_seq))</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>secwatch_down,impair_defenses,</group>
+  </rule>
+
+  <rule id="100364" level="3">
+    <if_sid>100362</if_sid>
+    <field name="event">^SECWATCH_GRACEFUL$</field>
+    <description>Endpoint $(agent) reported a graceful shutdown - silence expected</description>
+    <group>secwatch_graceful,</group>
+  </rule>
+
+  <rule id="100365" level="3">
+    <if_sid>100362</if_sid>
+    <field name="event">^SECWATCH_RECOVERED$</field>
+    <description>Endpoint $(agent) heartbeat resumed (seq $(last_seq))</description>
+    <group>secwatch_recovered,</group>
+  </rule>
+
+</group>

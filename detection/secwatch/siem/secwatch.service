@@ -1,0 +1,7 @@
+[Unit]
+Description=Endpoint watchdog - detect agent silence (surviving channel)
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/secwatch/watchdog.py
