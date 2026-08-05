@@ -1,0 +1,7 @@
+[Unit]
+Description=SIEM self-health monitor - detect silent analysisd death
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/siem-health/health-check.py

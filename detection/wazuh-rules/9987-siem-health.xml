@@ -1,0 +1,58 @@
+<!--
+  SIEM self-health (Phase 7 - monitoring the monitor)
+
+  A malformed rule file takes wazuh-analysisd down entirely (CRITICAL 1220) and
+  the container keeps reporting "Up", because Docker only watches PID 1. That
+  failure mode cost six and a half hours of silent blindness on 2026-08-05: the
+  rules were correct, the regexes were correct, and nothing was being evaluated.
+
+  Detection engineering has a blind spot at its own foundation - the engine that
+  evaluates the rules cannot alert on its own absence. So the check runs OUTSIDE
+  the container, on a timer, and writes to a log the manager reads once it is
+  healthy again. The alert is delayed by the outage, but it is not lost.
+
+  This extends the Phase 4.5 principle (monitor the monitor) from tampering to
+  availability: an analyst needs to know the SIEM stopped looking, whether the
+  cause was an attacker or a typo in a rule file.
+-->
+<group name="siem_health,local,">
+
+  <rule id="100395" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="event">^SIEM_</field>
+    <description>SIEM health event</description>
+    <group>siem_health_event,</group>
+  </rule>
+
+  <rule id="100396" level="14">
+    <if_sid>100395</if_sid>
+    <field name="event">^SIEM_DEGRADED$</field>
+    <description>SIEM core services down - detection has stopped ($(services_down)). Last critical: $(last_critical)</description>
+    <mitre>
+      <id>T1562.001</id>
+    </mitre>
+    <group>siem_down,impair_defenses,</group>
+  </rule>
+
+  <rule id="100397" level="14">
+    <if_sid>100395</if_sid>
+    <field name="event">^SIEM_UNREACHABLE$</field>
+    <description>SIEM manager unreachable - cannot determine service state</description>
+    <group>siem_down,</group>
+  </rule>
+
+  <rule id="100398" level="12">
+    <if_sid>100395</if_sid>
+    <field name="event">^SIEM_RECOVERY_FAILED$</field>
+    <description>SIEM automatic recovery failed - manual intervention required ($(services_down))</description>
+    <group>siem_down,</group>
+  </rule>
+
+  <rule id="100399" level="5">
+    <if_sid>100395</if_sid>
+    <field name="event" type="pcre2">^SIEM_(RECOVERED|HEALTHY)$</field>
+    <description>SIEM services restored - $(note)</description>
+    <group>siem_recovered,</group>
+  </rule>
+
+</group>
