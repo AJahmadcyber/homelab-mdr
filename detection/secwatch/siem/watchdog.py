@@ -69,6 +69,14 @@ def parse(lines):
             # silence can be attributed to a planned stop rather than a kill.
             shutdowns[agent] = d.get("timestamp", "")
             continue
+        # Only accept the agent's own command output. PowerShell Script Block
+        # Logging (4104) records the TEXT of this heartbeat script, which contains
+        # the literal line "SECWATCH seq=$seq" - a plain substring match reads
+        # those as heartbeats. Not cosmetic: script-block noise makes a killed
+        # agent look alive, silencing the exact detection this watchdog exists
+        # for, and it produced a false SECWATCH_KILLED at 72455s.
+        if not log.startswith("ossec: output: 'secwatch'"):
+            continue
         if "SECWATCH " not in log:
             continue
         fields = {}

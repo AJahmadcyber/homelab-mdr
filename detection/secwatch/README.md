@@ -60,6 +60,19 @@ move is to stop sending - which is exactly the trigger.
 | 100364 | Heartbeats stopped after an announcement | 3 |
 | 100365 | Heartbeats resumed | 3 |
 
+## Dependency — read this before changing archive settings
+
+The watchdog reads heartbeats from `/var/ossec/logs/archives/archives.json`, so
+**`<logall_json>` must stay `yes`**. It was turned off during a disk-space
+cleanup in the same session this layer was built, which silently cut the
+watchdog's only data source: heartbeats kept arriving, the archive stopped
+recording them, and the last entry it could see aged until it raised a false
+`SECWATCH_KILLED` at 72,577 seconds.
+
+Measured cost of keeping it on: roughly 225 MB/day raw, rotated and compressed
+daily. Against 75 GB free that is years of headroom — the cleanup traded a
+working detection layer for a saving that did not matter.
+
 ## Setup notes that cost time
 
 - **The agent holds `events.log` open.** `Add-Content` fails with a sharing
@@ -76,6 +89,14 @@ move is to stop sending - which is exactly the trigger.
   verify a config change actually took effect rather than trusting the exit code.
 - **A stale shutdown marker would mask a kill.** The heartbeat clears any marker
   written before the current boot.
+- **Filter heartbeats by source, not by substring.** PowerShell Script Block
+  Logging (4104) records the *text* of the heartbeat script, which contains the
+  literal line `SECWATCH seq=$seq`. A plain `"SECWATCH " in log` match reads
+  those as heartbeats — so a killed agent looks alive purely from PowerShell
+  noise, silencing the one detection this layer exists for. The parser now
+  requires the line to start with `ossec: output: 'secwatch'`, which only the
+  agent's own command output produces. The symptom that exposed it was
+  `last_seq: "$seq"` appearing literally in an alert.
 - **systemd timer, not `Restart=always`.** A crash-looping service reports
   `active`. A timer running a `oneshot` records each run's success or failure.
 
