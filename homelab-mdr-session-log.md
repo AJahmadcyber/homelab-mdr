@@ -3,7 +3,7 @@
 > Build journal: SOC Detection Engineering Lab. From idea to full detection stack.
 > **GitHub:** https://github.com/AJahmadcyber/homelab-mdr
 
-**Last updated:** August 5, 2026 — Phase 7 Stage 4 (Defense Evasion / BYOVD) CLOSED, including the L4 resilient layer. Sub-phases 7-A/7-B/7-C proven earlier; this session added driver-load, kill, correlation, code-integrity tampering, the surviving-channel detection, and a SIEM self-health monitor built after a real 6.5-hour outage.
+**Last updated:** August 7, 2026 — Phase 7 Stage 5 (Lateral Movement) chain proven end-to-end (win-ep → siem): SSH key stolen over C2, Ligolo-ng tunnel, valid-account login with the stolen key. Two detection gaps surfaced and documented. Attack-command table, tooling list and roadmap updated to match reality.
 
 ---
 
@@ -735,3 +735,137 @@ Two things came out of it:
 - Cortex org key still hardcoded in the n8n code node.
 - Stage 5 (Lateral Movement) and Stage 7 (Impact) remain. Stage 7 needs a
   snapshot first.
+
+---
+
+## Phase 7 — Stage 5 (Lateral Movement) — Record (2026-08-07)
+
+> Numbering: this stage is 7-E in the attack-command table (`README.md`). The
+> chain ran end-to-end; the detection side is partly in progress, and that is
+> recorded honestly below rather than smoothed over.
+
+### The scenario, and why the path exists
+
+Not "the attacker decided to hit the server." win-ep is the admin workstation,
+so it holds an SSH key for the SIEM — the attacker finds what the admin left
+there. Each hop is justified by a legitimate admin workflow: the key on win-ep
+exists because the SIEM is managed from that box.
+
+Chain: **win-ep → siem**, key-based, over the pivot.
+
+| Step | Technique | Tool |
+|---|---|---|
+| Steal the planted SSH key | T1552.004 | Sliver `download` from the live beacon |
+| Tunnel out of the endpoint | T1572 | Ligolo-ng (userland TUN) |
+| Spray to trip detection | T1110 | ssh loop through the tunnel |
+| Log in with the stolen key | T1021.004 + T1078 | ssh -i |
+| Read the detection config | T1005 | over the SSH session |
+
+### What ran, and what fired
+
+The chain is real and complete: the beacon stole the key, Ligolo tunnelled out,
+the spray hit sshd, and the stolen key authenticated `svc-backup@siem` — proven
+by `Accepted publickey ... from 10.10.10.20` in auth.log and a live session that
+read `/opt/homelab-mdr/...`.
+
+The pivot is proven not by assertion but by attribution: **every SSH event on
+the SIEM shows the source as win-ep (10.10.10.20), not the attacker.** The
+traffic left the ThinkPad, entered win-ep through the tunnel, and emerged from
+there — exactly what a pivot is supposed to look like.
+
+Detection, honestly:
+
+| Signal | Result |
+|---|---|
+| On-disk beacon drop to `%TEMP%\svc.exe` | **Rule 92213, level 15 (T1105)** — fired |
+| Credential spray | **Rule 5763, level 10 (T1110)** — fired, source correctly attributed to win-ep |
+| Key theft (SACL read) | *silent* — the agent's Security channel filters EID 4663 |
+| Successful login | *in progress* — `Accepted publickey` is in auth.log but does not reach Wazuh |
+| Post-access commands | *in progress* — auditd did not capture the non-interactive `id`/`ls` |
+
+Two of these are genuine visibility gaps, surfaced by running the attack rather
+than by guessing. They are the useful output of the session — they show exactly
+where the SIEM's view is thin, and they are the first work of the next session.
+
+### The C2 pivot decision (why Sliver *and* Ligolo)
+
+Sliver's own SOCKS5 would have been enough for one hop. Ligolo was used for the
+realism and for the cleaner mechanics (native tooling over a TUN, no
+proxychains, no DNS leak). The honest note: on a single-hop lab the upgrade is
+naming and realism more than capability — but the pivot it produced is the real
+artifact, and the SIEM-side attribution to win-ep is what makes the lateral
+movement legible.
+
+### Lessons — mostly the transport, which cost the session's time
+
+- **The Sliver `website` channel doubled binary downloads.** The stored file was
+  intact (hash matched), but every HTTP pull returned exactly 2× the bytes.
+  Survived re-adding content and restarting the listener; only a full
+  `websites rm` + rebuild + a cache-busting `?v=<rand>` on the request URL fixed
+  it. The first file of the session (svc.exe) came down clean because it was
+  pulled once; everything after doubled. Suspect listener-side caching corrupted
+  by the repeated `jobs -k` / restart cycles.
+- **`Invoke-WebRequest` and `WebClient.DownloadFile` both doubled it** — so it
+  was the server, not the client. Base64-over-text doubled too (17.8M chars for
+  an 8.9M file), which ruled out "binary vs text" and pointed squarely at the
+  channel.
+- **Sliver `download` writes CRLF line endings on Windows.** The stolen key
+  loaded as "invalid format" until every `\r\n` was converted to `\n`. Header
+  and line count looked correct; only `raw.Contains([char]13)` exposed it.
+- **Ligolo proxy on Windows needs `wintun.dll` beside the exe** (not in the zip)
+  — without it the proxy panics on `tunnel_start`. And the proxy must run
+  **elevated**: TUN creation fails `Access is denied` otherwise.
+- **Ligolo agent must be run once, cleanly.** Multiple stray `agent.exe`
+  processes fought each other — the session joined and dropped every ~10s until
+  all but one were killed. Run with `-retry`.
+- **Two equal-metric routes are ambiguous.** After adding the tun route, both it
+  and the real NIC had metric 256, so Windows could pick either — the ping that
+  "worked" proved nothing. Forcing the tun route to `RouteMetric 1` and then
+  reading `InterfaceAlias: ligolo` from `Test-NetConnection` was the actual
+  proof the traffic took the tunnel.
+- **The ticket is the analyst's interface — read it first.** Time was spent
+  digging in `archives.json` chasing a doubled `grep -c` count for EID 3, while
+  the SOAR ticket already had the answer classified (92213, level 15, C2). The
+  raw-log spelunking was self-inflicted; the ticket was right there.
+- **`ssh` cannot take a password from a variable or stdin** — it always prompts
+  the tty. The loop sprayed empty passwords, which still registered as failed
+  auth (enough to fire 5763), but it means the fail2ban test was incomplete: the
+  empty-password spray produced "connection closed [preauth]" rather than the
+  "Failed password" the fail2ban filter matches. Not a fail2ban defect — an
+  incomplete test. A real spray with actual passwords (or NetExec) would produce
+  the pattern fail2ban catches. Recorded as such, not as a negative result.
+- **fail2ban watches `ssh.service`; the service is `ssh.service` on Ubuntu, not
+  `sshd.service`** — worth confirming when the fail2ban work resumes, though the
+  jail did read the journal. Wazuh's rule 5763 caught the brute force regardless,
+  which is the layered-defence point: the broader layer covered what the narrow
+  one missed.
+
+### Tooling note
+
+NetExec was intended for the spray but was not used: it is not installed on the
+ThinkPad and there is no real Python there (the `python.exe` on PATH is the
+Microsoft Store stub). The built-in OpenSSH client did the spray instead. The
+tooling list in the README reflects this — NetExec is deliberately absent.
+
+### Open items (carried to the next session)
+
+- **Diagnose why `Accepted publickey` does not reach Wazuh** while failed auth
+  does — the highest-value gap.
+- **auditd for non-interactive SSH sessions** — the `id`/`ls` run over
+  `ssh host "cmd"` were not captured.
+- **Correlation rule**: a successful SSH login from a host that currently has
+  active high-severity alerts = lateral movement. Build in SOAR first (the 4d
+  lesson), though the ransomware ruleset shows Wazuh *can* chain via
+  `if_matched_group` + frequency — worth one retry.
+- **T1110 has no entry in the ticket engine's TECHNIQUES table** — the brute-force
+  ticket classified with a blank tactic. One-line add (Credential Access).
+- **EID 4663/4907 are filtered at the agent** — the shipped Security-channel
+  `<query>` excludes them. They were removed from the *local* ossec.conf, but a
+  clean read still did not arrive; the exclusion or an agent.conf interaction
+  needs one more look. Note: 4663 is a shallow control anyway — an attacker with
+  kernel access reads the key from memory (LSASS / ssh-agent), which the Stage 3
+  credential-access rules already cover.
+- **Cleanup still owed**: remove `svc-backup` on siem, `agent.exe` in win-ep
+  `%TEMP%`, and the planted `.ssh` keys on win-ep. Left in place deliberately to
+  continue the detection work next session.
+- **Snapshot still pending** (ThinkPad disk) — required before Stage 7 (Impact).
