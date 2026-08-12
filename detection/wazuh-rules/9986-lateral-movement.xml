@@ -1,0 +1,27 @@
+<!--
+  Phase 7 Stage 5 - Lateral Movement detection (T1078 + T1021.004)
+  Unauthorized SSH publickey login to SIEM from non-allowlisted source.
+  Allowlist maintained in CDB: etc/lists/siem-ssh-allowlist
+  Logic: 100210 elevates ANY successful publickey login;
+         100211 suppresses (level 0) if srcip is in the allowlist.
+  Detect-only (SIEM is management plane - no auto-block).
+-->
+<group name="lateral_movement,unauthorized_siem_access,">
+
+  <rule id="100210" level="12">
+    <if_sid>5715</if_sid>
+    <description>Unauthorized SSH publickey login to SIEM from $(srcip) as $(dstuser) - possible lateral movement</description>
+    <mitre>
+      <id>T1078</id>
+      <id>T1021.004</id>
+    </mitre>
+    <group>authentication_success,pci_dss_10.2.5,gdpr_IV_32.2,</group>
+  </rule>
+
+  <rule id="100211" level="0">
+    <if_sid>100210</if_sid>
+    <list field="srcip" lookup="address_match_key">etc/lists/siem-ssh-allowlist</list>
+    <description>Authorized SSH login to SIEM from allowlisted source $(srcip) - suppressed</description>
+  </rule>
+
+</group>
