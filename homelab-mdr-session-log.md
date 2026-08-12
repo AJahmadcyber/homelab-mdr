@@ -869,3 +869,174 @@ tooling list in the README reflects this — NetExec is deliberately absent.
   `%TEMP%`, and the planted `.ssh` keys on win-ep. Left in place deliberately to
   continue the detection work next session.
 - **Snapshot still pending** (ThinkPad disk) — required before Stage 7 (Impact).
+
+---
+
+# Session — 2026-08-12: Stage 5 closed (allowlist detection + SOAR cross-host correlation), proven through a live pivot
+
+The 7-E lateral-movement gap from the previous session is closed. Two things were
+built and then validated with a full real-tool attack, not a synthetic login:
+an allowlist-based Wazuh rule that fires on any unexpected SSH login to the SIEM,
+and a SOAR correlation node that ties that login to the source host's recent
+high-severity activity into a single Critical ticket.
+
+## The gap was classification, not collection
+
+The earlier symptom — "`Accepted publickey` never reaches Wazuh" — was traced to
+its real cause. The event *does* reach the manager: it is in `archives.json`,
+decoded correctly (`decoder.parent=sshd`, `location=journald`, `data.srcip`
+extracted). It simply never alerted, because Wazuh's built-in rule **5715**
+(`sshd: authentication success`) fires at **level 3**, below the alerting
+threshold. A `logtest` on the real attack line confirmed 5715/level-3. So this
+was never a collection or decoder failure — the successful login was being
+classified as routine. The fix is a detection-policy decision, not a pipeline fix.
+
+## Rule 100210/100211 — allowlist, not signature
+
+The design question is the important one: a valid key from a valid account over
+SSH looks exactly like an administrator, because it *is* one, mechanically. There
+is no field inside the SSH event that separates attacker from admin. The signal
+is not the key — it is the **source**. Administrators reach the SIEM from one
+known place; anything else is the finding. This is the allowlist stance (define
+what is expected; everything else is suspicious), which is stronger than a
+denylist for a high-value asset.
+
+- **100210** (level 12, T1078 + T1021.004): inherits `if_sid 5715`, fires on any
+  successful publickey login to the SIEM.
+- **100211** (level 0): suppresses 100210 when the source is in the allowlist,
+  via a CDB list lookup. The allowlist is `10.10.10.2` (admin jump) + `127.0.0.1`
+  (loopback), established empirically from the historical publickey sources in
+  `auth.log`, not assumed.
+- **Detect-only, no auto-block.** The SIEM is the management plane; the admin jump
+  and the attack platform are the same host (ThinkPad), so any block logic is
+  self-contradictory and risks locking out administration. Alert and escalate;
+  do not block. This is a deliberate architectural position, not a missing feature.
+
+### Wazuh lessons from building it (each cost a cycle)
+
+- **`<srcip>` does not support regex or comma/pipe lists.** Confirmed against the
+  shipped ruleset (no official rule uses `<srcip negate>` or a list) and by the
+  Wazuh team: `<srcip>` takes a single IP or CIDR; repeating the tag concatenates,
+  but there is no regex/alternation. Every `10.10.10.2,127.0.0.1`,
+  `10.10.10.2|127.0.0.1`, and `^...$` attempt failed with `Invalid ip address`.
+- **`srcip` is a static field** — it cannot be matched via `<field name="srcip">`
+  either (`Field 'srcip' is static`). So neither `<srcip>` lists nor `<field>`
+  regex work.
+- **The correct mechanism is a CDB list with `address_match_key`.** A catch-all
+  rule (100210) is suppressed by a child rule (100211) whose
+  `<list field="srcip" lookup="address_match_key">` matches the allowlist. Policy
+  (the addresses) is separated from logic (the rule), the same way intelligence is
+  separated into the SOAR.
+- **The rules directory is a named Docker volume (`wazuh_etc`), not a host bind
+  mount.** Custom rules written under `/opt/homelab-mdr/.../wazuh_cluster/` never
+  reach `/var/ossec/etc/rules/`; that host path is only bound to `ossec.conf`.
+  Write rule files into the container (`docker exec ... tee`) and `chown
+  wazuh:wazuh` after — the file lands `wazuh:wazuh 660` like the others.
+- **`wazuh-makelists` no longer exists in 4.9.** CDB compilation is folded into the
+  rule-load path; the list compiles on manager restart once registered. Register
+  it in the host `ossec.conf` `<ruleset>` block (`<list>etc/lists/siem-ssh-allowlist</list>`)
+  — the host file is the source of truth, the container copy is overwritten on boot.
+- **Always `wazuh-analysisd -t` before restart.** Every failed attempt above was
+  caught by `-t` (with the empty-output caveat: an empty `-t` result meant the
+  rule was not being read at all, because it was in the wrong directory).
+
+## The SOAR correlation node — cross-host, same pattern as BYOVD
+
+The login alone is unauthorized but context-free. Paired with a high-severity
+alert from the *same source host* moments earlier, it is lateral movement — the
+box that just ran a beacon then logged into the SIEM. This is the pattern the big
+vendors formalise (Microsoft's Lateral Movement Paths, CrowdStrike's "raise
+attention on the host"): nobody detects it on the single login event; everyone
+correlates.
+
+Built as a code node modelled on the existing BYOVD correlation node, placed after
+it in the chain (`Cortex enrichment → BYOVD correlation → Lateral Movement
+correlation → If1`). It uses `$getWorkflowStaticData` as a per-host store: any
+alert at level ≥ 12 is remembered keyed by `agent.ip`; when 100210 arrives, it
+looks back for a stored alert whose key matches the login's `data.srcip` inside a
+15-minute window, and if found raises the event to level 15, tags `lateral_chain`,
+and carries the prior alert into the ticket.
+
+- **The join key is the pivot made provable.** The login event is observed on the
+  SIEM (`agent.ip=10.10.10.10`) but carries `data.srcip=10.10.10.20`; the beacon
+  alert is observed on win-ep (`agent.ip=10.10.10.20`). The match is
+  `login.data.srcip == host_alert.agent.ip`. Because the attacker pivots through
+  win-ep, sshd sees win-ep's address — which is exactly win-ep's agent.ip. The
+  pivot is what makes the two line up.
+- **The store persists only on real triggered executions**, not on manual
+  "Execute workflow" runs — same caveat as BYOVD. A payload probe was used first
+  to confirm the real field shape before writing the final code, rather than
+  assuming paths.
+
+### The ticket builder — consume the chain, fix Uncategorised
+
+The `SOC Investigation Ticket` node was reading from `BYOVD correlation`, upstream
+of the new node, so it silently discarded every `lateral_*` field and the raised
+level. Repointed it to read from `Lateral Movement correlation` (the last node in
+the chain, which carries everything). Then, mirroring the BYOVD treatment
+exactly: added `T1078`, `T1021.004`, and `T1110` to the `TECHNIQUES` table (the
+missing entries were why lateral tickets classified as **Uncategorised** and the
+brute-force ticket had a blank tactic — the old T1110 open item, fixed here);
+added a CISA-modelled `Lateral Movement` playbook; raised `Lateral Movement` to 7
+in `TACTIC_PRIORITY`; and added a `lateral` branch (severity, chain table in the
+description, its own dedup key space, labels, timeline, classification) that
+parallels `byovd`. When both flags co-occur, BYOVD wins — Ring 0 precedes
+encryption; a lateral login is one step earlier.
+
+## Validated with a full real-tool attack through the pivot
+
+The logic was first proven with a direct login (correct behaviour, but win-ep is
+genuinely the source, so no pivot). Closing the stage properly meant re-running
+the real chain end to end, because the whole point is that detection survives the
+attacker hiding behind a pivot:
+
+1. **Sliver beacon** regenerated from an existing implant (`regenerate
+   SILLY_LITIGATION --save ...`) — avoids guessing `generate` flags; the
+   implant inherits the live mTLS listener. Note: `regenerate --save` mangles the
+   output path (strips backslashes into one filename) — copy to a clean name after.
+2. **Delivery over the Sliver `website` channel** (rebuilt clean: `websites rm` +
+   re-add + `?v=<rand>` cache-buster — the doubling bug from the last session).
+   The `%TEMP%\svc.exe` write fires **92213** (L15). Windows Defender quarantined
+   the beacon between download and launch on the first try — real-time protection
+   deletes Sliver on sight; disabling it on the victim let the beacon run.
+3. **Ligolo-ng tunnel with the Web UI** (the deferred visual item). 0.8.2 has no
+   `-webui` flag; the Web UI is enabled through a `ligolo-ng.yaml` `web:` block
+   (`enabled/enableui/listen`) passed with `-config`. Default creds are
+   `ligolo:password`. Put it on **:8090** — :8080 collides with the Sliver HTTP
+   listener. `ifconfig` inside the agent session shows what the pivot host sees
+   (win-ep has only 10.10.10.20/24 + loopback — same subnet as everything, so the
+   pivot here proves *attribution deception*, not access to a hidden segment).
+   `tunnel_start --tun ligolo`, then a route with metric 1 (lower than the direct
+   route) so traffic to the SIEM prefers the tunnel; `Test-NetConnection ...:22`
+   showing `InterfaceAlias: ligolo` confirms it.
+4. **Key theft over C2** (`download ...id_ed25519`) then the CRLF→LF fix (Sliver
+   writes CRLF on Windows; SSH rejects it). SSH through the tunnel with the stolen
+   key: the SIEM logs the source as **win-ep (10.10.10.20)**, not the ThinkPad
+   attacker behind the tunnel.
+
+**Result:** 100210 fired live (srcip 10.10.10.20), the SOAR correlated it with the
+92213 beacon drop (gap 533s, inside the window), and the ticket came out
+**[Critical] Lateral Movement** with the full chain table — from a real attack in
+which the true origin was hidden by the pivot. Evidence: three ticket screenshots
++ Ligolo Web UI + Sliver console, under `docs/evidence/phase7/`.
+
+## Cross-platform clock check (before trusting the 15-minute window)
+
+All four platforms were verified NTP-synced and agreeing in UTC before relying on
+the correlation window: siem (UTC-native, systemd-timesyncd), win-ep and pfSense
+(pfSense is the LAN NTP server), ThinkPad (time.windows.com, external by design).
+A skewed clock would have silently broken the window; this was checked, not assumed.
+
+## Open items (carried forward)
+
+- **auditd for non-interactive SSH** still not capturing `ssh host "cmd"` — the
+  one remaining 7-E gap, labelled honestly.
+- **Suricata stepping-stone attribution (angle 3)** — network-layer proof of the
+  pivot from off the endpoint (pfSense sees real packet sources). Deferred; higher
+  portfolio value but not required to close 7-E.
+- **Cleanup owed**: `svc-backup` on siem; `svc.exe`/`agent.exe`/`svc_fresh.exe` in
+  win-ep `%TEMP%`; planted `.ssh` keys; `stolen_key*` on ThinkPad; tear down the
+  Ligolo tunnel and Sliver beacon. Left running only if the next session needs them.
+- **Snapshot still pending** (ThinkPad disk) — required before Stage 7 (Impact).
+- **Cortex org API key** was redacted to `<CORTEX_ORG_API_KEY>` in the exported
+  workflow before committing — the tech-debt item; still hardcoded in the live node.
