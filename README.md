@@ -36,7 +36,7 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | ↳ SIEM self-health | Detects the SIEM's own engine dying silently (a bad rule file kills analysisd while the container still reports Up) and recovers it | ✅ Implemented |
 | ↳ 7-E — Lateral Movement | SSH key stolen over the Sliver C2 channel → Ligolo-ng tunnel → valid-account login to the SIEM; allowlist detection (100210/100211) + cross-host SOAR correlation, proven end-to-end through the pivot | ✅ Implemented |
 | ↳ 7-F — Impact | The objective stage: volume enumeration → recovery-capability destruction (shadow copies, backup catalogue, System Restore, boot recovery) → mass encryption → event-log clearing. Sixteen rules across five techniques, validated by two independent tools | ✅ Implemented |
-| 8 — Coverage engine | Atomic Red Team chains, automated detection scoring, live MITRE ATT&CK Navigator layer | ⏳ Roadmap |
+| 8 — Coverage engine | Automated execution over WinRM, per-technique scoring against the Indexer, ATT&CK Navigator layer and SVG heatmap generated from measured results | ✅ Implemented (chain A) |
 
 ---
 
@@ -200,6 +200,35 @@ The workflow grew from a triage-and-block path into a classifier. Fifteen nodes 
 **Deduplication keeps the queue usable.** A beacon emits an event roughly every 70 seconds; thirteen identical Critical tickets an hour is alert fatigue, not detection. Identical detections inside a 15-minute window resolve to the same ticket key, which doubles as TheHive's `sourceRef`, so the duplicate is rejected and the open ticket stands. Correlated chains get their own key space - without that, the chain ticket would collide with the plain single-rule ticket already opened in the same window and the most important ticket would be lost silently.
 
 A second pipeline handles **phishing**: a user-reported `.eml` from an IMAP mailbox is parsed, its observables routed through Cortex, and scored on signals that need no prior reputation - brand-lookalike domains (homoglyph normalisation + edit distance), display-name mismatches, SPF/DKIM/DMARC results, anchor-text deception, credential-capture paths, and lure language. On a test sample where every reputation source returned clean (VirusTotal 0/91, URLhaus no results), scoring still reached high risk on seven independent signals - which is the point, because targeted phishing uses domains too new to have any reputation.
+
+## Measured detection coverage (Phase 8)
+
+Detection coverage is measured, not asserted: each technique is executed against
+the running stack and graded on what the SIEM actually produced.
+
+![Detection coverage](detection/coverage-engine/results/layers/coverage-atomic-automated.svg)
+
+The engine runs the attack over WinRM, records exactly when each step ran, then
+queries the Wazuh Indexer for the window that follows and grades the outcome.
+Execution and scoring are separate programs, so a chain can be re-graded after a
+rule change without re-running the attack.
+
+Grading uses five outcomes rather than the usual three. **Prevented** records a
+technique stopped by ASR before it executed — the best possible result, and one
+the conventional green/yellow/red scale cannot express because it assumes the
+attack ran. **Generic only** records a built-in rule firing with no technique
+mapping and no ticket: neither coverage nor a blind spot, and the single most
+actionable finding a run produces. **Logged only** separates a rules problem
+from a logging problem. Steps whose attack never executed are excluded rather
+than counted as gaps, because a setup failure is not a detection failure.
+
+T1046 is **Partial** for a reason worth stating: rule 100320 keys on a scanner
+command line, so it detects the nmap procedure and is blind to a native
+PowerShell socket loop. Coverage belongs to the *procedure*, not the technique —
+reporting the best outcome would hide a real gap behind a working rule.
+
+Full methodology, the Navigator layer and the auditable scorecard:
+[`detection/coverage-engine/`](detection/coverage-engine/).
 
 ## Key design decisions
 

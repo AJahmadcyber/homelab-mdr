@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="923" height="402" viewBox="0 0 923 402" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<rect width="923" height="402" fill="#ffffff"/>
+<text x="24" y="42" font-size="21" font-weight="600" fill="#111">Detection coverage - measured, not inventoried</text>
+<text x="24" y="68" font-size="13" fill="#555">Chain: atomic-automated | Target: win-ep | 2026-08-18T17:40:24</text>
+<text x="24" y="94" font-size="16" font-weight="600" fill="#111">Coverage 87.5% (21/24 points, 8 steps)</text>
+<rect x="24" y="112" width="12" height="12" rx="2" fill="#2166ac"/>
+<text x="41" y="122" font-size="11" fill="#444">Prevented</text>
+<rect x="109" y="112" width="12" height="12" rx="2" fill="#1a9850"/>
+<text x="126" y="122" font-size="11" fill="#444">Detected</text>
+<rect x="187" y="112" width="12" height="12" rx="2" fill="#fdae61"/>
+<text x="204" y="122" font-size="11" fill="#444">Partial</text>
+<rect x="258" y="112" width="12" height="12" rx="2" fill="#fee08b"/>
+<text x="275" y="122" font-size="11" fill="#444">Generic</text>
+<rect x="329" y="112" width="12" height="12" rx="2" fill="#f46d43"/>
+<text x="346" y="122" font-size="11" fill="#444">Logged</text>
+<rect x="393" y="112" width="12" height="12" rx="2" fill="#d73027"/>
+<text x="410" y="122" font-size="11" fill="#444">Blind</text>
+<text x="24" y="138" font-size="12" font-weight="600" fill="#333" text-transform="uppercase">Execution</text>
+<rect x="24" y="150" width="165" height="62" rx="5" fill="#1a9850"/>
+<text x="34" y="170" font-size="12" font-weight="700" fill="#fff">T1059.001</text>
+<text x="34" y="185" font-size="10" fill="#ffffff" opacity="0.95">PowerShell</text>
+<text x="34" y="200" font-size="9" fill="#ffffff" opacity="0.9">Detected  100100,100101,100102  6</text>
+<text x="199" y="138" font-size="12" font-weight="600" fill="#333" text-transform="uppercase">Persistence</text>
+<rect x="199" y="150" width="165" height="62" rx="5" fill="#1a9850"/>
+<text x="209" y="170" font-size="12" font-weight="700" fill="#fff">T1547.001</text>
+<text x="209" y="185" font-size="10" fill="#ffffff" opacity="0.95">Registry Run Keys</text>
+<text x="209" y="200" font-size="9" fill="#ffffff" opacity="0.9">Detected  100333  67s</text>
+<text x="374" y="138" font-size="12" font-weight="600" fill="#333" text-transform="uppercase">Credential Access</text>
+<rect x="374" y="150" width="165" height="62" rx="5" fill="#2166ac"/>
+<text x="384" y="170" font-size="12" font-weight="700" fill="#fff">T1003.001</text>
+<text x="384" y="185" font-size="10" fill="#ffffff" opacity="0.95">LSASS Memory</text>
+<text x="384" y="200" font-size="9" fill="#ffffff" opacity="0.9">Prevented</text>
+<text x="549" y="138" font-size="12" font-weight="600" fill="#333" text-transform="uppercase">Discovery</text>
+<rect x="549" y="150" width="165" height="62" rx="5" fill="#fdae61"/>
+<text x="559" y="170" font-size="12" font-weight="700" fill="#fff">T1046</text>
+<text x="559" y="185" font-size="10" fill="#ffffff" opacity="0.95">Network Service Discovery</text>
+<text x="559" y="200" font-size="9" fill="#ffffff" opacity="0.9">Partial  100320  0s</text>
+<text x="724" y="138" font-size="12" font-weight="600" fill="#333" text-transform="uppercase">Impact</text>
+<rect x="724" y="150" width="165" height="62" rx="5" fill="#1a9850"/>
+<text x="734" y="170" font-size="12" font-weight="700" fill="#fff">T1070.001</text>
+<text x="734" y="185" font-size="10" fill="#ffffff" opacity="0.95">Clear Windows Event Logs</text>
+<text x="734" y="200" font-size="9" fill="#ffffff" opacity="0.9">Detected  100404  0s</text>
+<rect x="724" y="222" width="165" height="62" rx="5" fill="#1a9850"/>
+<text x="734" y="242" font-size="12" font-weight="700" fill="#fff">T1490</text>
+<text x="734" y="257" font-size="10" fill="#ffffff" opacity="0.95">Inhibit System Recovery</text>
+<text x="734" y="272" font-size="9" fill="#ffffff" opacity="0.9">Detected  100401,100409  43s</text>
+<text x="24" y="322" font-size="11" fill="#555">Each cell was executed against the live stack; the grade reflects what the SIEM produced.</text>
+<text x="24" y="340" font-size="11" fill="#555">Partial means one procedure is covered and another is blind - coverage belongs to the procedure, not the technique.</text>
+<text x="24" y="358" font-size="11" fill="#555">Latency is measured from the end of attack execution to the first matching alert.</text>
+<text x="24" y="382" font-size="10" fill="#888">github.com/AJahmadcyber/homelab-mdr</text>
+</svg>
