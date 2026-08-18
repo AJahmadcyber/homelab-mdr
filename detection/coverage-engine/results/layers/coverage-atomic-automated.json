@@ -1,0 +1,130 @@
+{
+  "name": "Coverage - atomic-automated",
+  "versions": {
+    "attack": "16",
+    "navigator": "5.3.2",
+    "layer": "4.5"
+  },
+  "domain": "enterprise-attack",
+  "description": "Measured detection coverage from the homelab-mdr coverage engine. Chain: atomic-automated. Scored 2026-08-18T17:40:24.147419Z. Coverage 87.5% (21/24 points). Every technique was executed against the live stack and graded on what the SIEM actually produced - not on rule inventory.",
+  "filters": {
+    "platforms": [
+      "Windows"
+    ]
+  },
+  "sorting": 3,
+  "layout": {
+    "layout": "side",
+    "showID": true,
+    "showName": true,
+    "showAggregateScores": false
+  },
+  "hideDisabled": false,
+  "techniques": [
+    {
+      "techniqueID": "T1003.001",
+      "score": 4,
+      "color": "#2166ac",
+      "comment": "outcome: PREVENTED | steps: A2 (PREVENTED)",
+      "enabled": true,
+      "showSubtechniques": false
+    },
+    {
+      "techniqueID": "T1046",
+      "score": 2,
+      "color": "#fdae61",
+      "comment": "outcome: PARTIAL - covered for some procedures, blind for others | rules: 100320 | detection latency: 0.0s | steps: A1 (BLIND); A8 (DETECTED)",
+      "enabled": true,
+      "showSubtechniques": false
+    },
+    {
+      "techniqueID": "T1059.001",
+      "score": 3,
+      "color": "#1a9850",
+      "comment": "outcome: DETECTED | rules: 100100, 100101, 100102 | detection latency: 5.6s | steps: A4 (DETECTED)",
+      "enabled": true,
+      "showSubtechniques": false
+    },
+    {
+      "techniqueID": "T1070.001",
+      "score": 3,
+      "color": "#1a9850",
+      "comment": "outcome: DETECTED | rules: 100404 | detection latency: 0.0s | steps: A7 (DETECTED)",
+      "enabled": true,
+      "showSubtechniques": false
+    },
+    {
+      "techniqueID": "T1490",
+      "score": 3,
+      "color": "#1a9850",
+      "comment": "outcome: DETECTED | rules: 100401, 100409 | detection latency: 43.4s | steps: A5 (DETECTED); A6 (DETECTED)",
+      "enabled": true,
+      "showSubtechniques": false
+    },
+    {
+      "techniqueID": "T1547.001",
+      "score": 3,
+      "color": "#1a9850",
+      "comment": "outcome: DETECTED | rules: 100333 | detection latency: 67.1s | steps: A3 (DETECTED)",
+      "enabled": true,
+      "showSubtechniques": false
+    }
+  ],
+  "gradient": {
+    "colors": [
+      "#d73027",
+      "#1a9850"
+    ],
+    "minValue": 0,
+    "maxValue": 4
+  },
+  "legendItems": [
+    {
+      "label": "Prevented before execution (ASR/Defender)",
+      "color": "#2166ac"
+    },
+    {
+      "label": "Partial - one procedure covered, another blind",
+      "color": "#fdae61"
+    },
+    {
+      "label": "Detected by a custom rule",
+      "color": "#1a9850"
+    },
+    {
+      "label": "Generic rule only - no technique mapping",
+      "color": "#fee08b"
+    },
+    {
+      "label": "Logged, never alerted",
+      "color": "#f46d43"
+    },
+    {
+      "label": "Blind spot",
+      "color": "#d73027"
+    }
+  ],
+  "showTacticRowBackground": true,
+  "tacticRowBackground": "#dddddd",
+  "selectTechniquesAcrossTactics": true,
+  "selectSubtechniquesWithParent": false,
+  "selectVisibleTechniques": false,
+  "metadata": [
+    {
+      "name": "chain",
+      "value": "atomic-automated"
+    },
+    {
+      "name": "target",
+      "value": "win-ep (agent 001)"
+    },
+    {
+      "name": "generated",
+      "value": "2026-08-18T18:00:39.971664Z"
+    },
+    {
+      "name": "source",
+      "value": "github.com/AJahmadcyber/homelab-mdr"
+    }
+  ]
+}

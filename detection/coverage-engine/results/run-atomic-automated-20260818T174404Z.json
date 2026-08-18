@@ -1,0 +1,43 @@
+{
+  "chain_id": "atomic-automated",
+  "chain_name": "Atomic Red Team \u2014 automated coverage probe",
+  "target": {
+    "host": "win-ep",
+    "agent_id": "001",
+    "agent_ip": "10.10.10.20"
+  },
+  "limitations": [
+    "Execution over WinRM makes the parent process wsmprovhost.exe rather than an interactive shell. Rules keyed on ParentImage will behave differently here than under manual execution. The rules in this lab key on commandLine, so they are unaffected \u2014 but a future ParentImage rule must be validated manually as well.\n",
+    "Defender real-time protection must be ON for an honest run. A prevented technique is a valid outcome and is recorded as such, not retried with protection disabled.\n"
+  ],
+  "run_start_utc": "2026-08-18T17:44:04.171771+00:00",
+  "run_end_utc": "2026-08-18T17:47:29.661324+00:00",
+  "cleanup": false,
+  "steps": [
+    {
+      "id": "A8",
+      "name": "Network discovery via scanner binary",
+      "atomic": "T1046",
+      "mode": "atomic",
+      "test_numbers": [
+        3
+      ],
+      "expect_mitre": [
+        "T1046"
+      ],
+      "expect_rules": [
+        100320
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1046-3 Port Scan NMap for Windows\r\n\r\nAttempting to satisfy prereq: \r\nNMap must be installed\r\n\r\nPrereq already met: \r\nNMap must be installed",
+      "t0_utc": "2026-08-18T17:44:10.328433+00:00",
+      "t1_utc": "2026-08-18T17:44:26.896063+00:00",
+      "duration_s": 16.57,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1046-3 Port Scan NMap for Windows\r\n\r\nStarting Nmap 7.95 ( https://nmap.org ) at 2026-08-18 20:44 Jordan Standard Time\r\nNmap scan report for localhost.lab.local (127.0.0.1)\r\nHost is up (0.00069s latency).\r\nNot shown: 996 closed tcp ports (reset)\r\nPORT     STATE SERVICE\r\n135/tcp  open  msrpc\r\n445/tcp  open  microsoft-ds\r\n5357/tcp open  wsdapi\r\n5985/tcp open  wsman\r\nNmap done: 1 IP address (1 host up) scanned in 7.84 seconds\r\nExit code: 0\r\nDone executing test: \r\nT1046-3 Port Scan NMap for Windows",
+      "error_stream": [],
+      "defender_blocked": null
+    }
+  ]
+}

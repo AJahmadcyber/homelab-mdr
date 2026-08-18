@@ -1,0 +1,123 @@
+# ============================================================
+#  Chain A — fully automated Atomic Red Team validation
+#
+#  Every step here runs unattended over WinRM. Steps that need
+#  the attacker host (Sliver, Ligolo, nmap) live in Chain B and
+#  are marked manual there.
+#
+#  Scoring contract per step:
+#    expect_rules  — custom rule IDs that SHOULD fire (score 3)
+#    expect_mitre  — the technique the step exercises
+#    window_s      — how long after execution the scorer looks
+#
+#  A step with no expect_rules is a deliberate coverage probe:
+#  we run it to find out whether anything catches it at all.
+# ============================================================
+
+chain:
+  id: atomic-automated
+  name: Atomic Red Team — automated coverage probe
+  description: >
+    Techniques from the Phase 7 kill chain that Atomic Red Team can
+    execute unattended on win-ep. Measures which custom rules fire,
+    which only reach generic community rules, and which produce
+    telemetry but no alert.
+  target:
+    host: win-ep
+    agent_id: "001"
+    agent_ip: 10.10.10.20
+  defaults:
+    # Both numbers are measured, and they are coupled.
+    #
+    # Detection latency: ~13-40s for an isolated step, but 106-133s once
+    # steps run back to back and the manager queues. The window must cover
+    # the worst case or a real detection is scored as a gap.
+    #
+    # settle_s must EXCEED that latency. The scorer clips each window at the
+    # next step's start time, because two adjacent steps sharing a technique
+    # (A5 and A6 are both T1490) would otherwise be credited with each
+    # other's late alerts. Clipping is only safe if the gap between steps is
+    # longer than detection takes - otherwise the clip truncates the window
+    # before the alert arrives. 180s settle against ~133s worst-case latency
+    # is the trade: a slower run in exchange for attribution that holds.
+    window_s: 240
+    settle_s: 180
+
+  limitations:
+    - >
+      Execution over WinRM makes the parent process wsmprovhost.exe
+      rather than an interactive shell. Rules keyed on ParentImage will
+      behave differently here than under manual execution. The rules in
+      this lab key on commandLine, so they are unaffected — but a future
+      ParentImage rule must be validated manually as well.
+    - >
+      Defender real-time protection must be ON for an honest run. A
+      prevented technique is a valid outcome and is recorded as such,
+      not retried with protection disabled.
+
+steps:
+  - id: A1
+    name: Network service discovery
+    atomic: T1046
+    test_numbers: [10]   # PowerShell /24 subnet scan - native, no nmap install
+    expect_mitre: [T1046]
+    expect_rules: [100320]
+
+  # Two procedures for one technique, on purpose. Rule 100320 keys on a
+  # scanner command line (nmap/masscan), so it covers A8 but cannot see A1's
+  # native PowerShell socket loop. Coverage is a property of the PROCEDURE,
+  # not the technique: T1046 is simultaneously covered and blind here, and a
+  # layer that showed only one of those would be lying in one direction or
+  # the other.
+  - id: A8
+    name: Network discovery via scanner binary
+    atomic: T1046
+    test_numbers: [3]   # Port Scan NMap for Windows - the cmdline 100320 keys on
+    expect_mitre: [T1046]
+    expect_rules: [100320]
+
+  - id: A2
+    name: LSASS memory dump via comsvcs
+    atomic: T1003.001
+    test_numbers: [2]   # test 1 is ProcDump: needs a download, and 100310/100311
+                        # key on comsvcs. win-ep has no internet by design.
+    expect_mitre: [T1003.001]
+    expect_rules: [100310, 100311]
+
+  - id: A3
+    name: Registry Run key persistence
+    atomic: T1547.001
+    test_numbers: [1]
+    expect_mitre: [T1547.001]
+    expect_rules: [100333, 100334, 100336]
+
+  - id: A4
+    name: Obfuscated PowerShell execution
+    atomic: T1059.001
+    test_numbers: [15]   # -EncodedCommand variations - what 100100-100102 key on
+    expect_mitre: [T1059.001]
+    expect_rules: [100100, 100101, 100102]
+
+  - id: A5
+    name: Shadow copy deletion (vssadmin)
+    atomic: T1490
+    test_numbers: [1]
+    expect_mitre: [T1490]
+    expect_rules: [100401]
+
+  - id: A6
+    name: Backup catalog deletion (wbadmin)
+    atomic: T1490
+    test_numbers: [3]
+    expect_mitre: [T1490]
+    expect_rules: [100409]
+
+  # Atomic Red Team has no T1070.001 folder (verified: only T1070 with FSUtil,
+  # plus .003/.004/.005/.006/.008). The library is not exhaustive, so the engine
+  # supports custom command steps for techniques it does not cover.
+  - id: A7
+    name: Event log clearing
+    custom_command: 'cmd.exe /c wevtutil cl Application'
+    atomic: T1070.001
+    expect_mitre: [T1070.001]
+    expect_rules: [100404]

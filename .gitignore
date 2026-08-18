@@ -34,3 +34,10 @@ logs/
 # Backup files
 *.bak
 *.orig
+.venv-coverage/
+detection/coverage-engine/.env
+detection/coverage-engine/results/run-*.json
+detection/coverage-engine/results/score-*.json
+!detection/coverage-engine/results/run-atomic-automated-20260818T171239Z.json
+!detection/coverage-engine/results/run-atomic-automated-20260818T174404Z.json
+!detection/coverage-engine/results/score-atomic-automated-baseline.json

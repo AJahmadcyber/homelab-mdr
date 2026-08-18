@@ -1,0 +1,200 @@
+{
+  "chain_id": "atomic-automated",
+  "chain_name": "Atomic Red Team \u2014 automated coverage probe",
+  "target": {
+    "host": "win-ep",
+    "agent_id": "001",
+    "agent_ip": "10.10.10.20"
+  },
+  "limitations": [
+    "Execution over WinRM makes the parent process wsmprovhost.exe rather than an interactive shell. Rules keyed on ParentImage will behave differently here than under manual execution. The rules in this lab key on commandLine, so they are unaffected \u2014 but a future ParentImage rule must be validated manually as well.\n",
+    "Defender real-time protection must be ON for an honest run. A prevented technique is a valid outcome and is recorded as such, not retried with protection disabled.\n"
+  ],
+  "run_start_utc": "2026-08-18T17:12:39.788291+00:00",
+  "run_end_utc": "2026-08-18T17:38:27.860718+00:00",
+  "cleanup": false,
+  "steps": [
+    {
+      "id": "A1",
+      "name": "Network service discovery",
+      "atomic": "T1046",
+      "mode": "atomic",
+      "test_numbers": [
+        10
+      ],
+      "expect_mitre": [
+        "T1046"
+      ],
+      "expect_rules": [
+        100320
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1046-10 Port-Scanning /24 Subnet with PowerShell\r\n\r\nNo Preqs Defined",
+      "t0_utc": "2026-08-18T17:12:44.192914+00:00",
+      "t1_utc": "2026-08-18T17:14:42.737726+00:00",
+      "duration_s": 118.54,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1046-10 Port-Scanning /24 Subnet with PowerShell\r\n\r\n[i] Using Interface Ethernet\r\n[i] Base IP-Address for Subnet: 10.10.10.20\r\n[i] Assuming /24 subnet. scanning 10.10.10.'1' to 10.10.10.'254'\r\nPort 445 is open on 10.10.10.20\r\nExit code: 0\r\nDone executing test: \r\nT1046-10 Port-Scanning /24 Subnet with PowerShell",
+      "error_stream": [],
+      "defender_blocked": null
+    },
+    {
+      "id": "A2",
+      "name": "LSASS memory dump via comsvcs",
+      "atomic": "T1003.001",
+      "mode": "atomic",
+      "test_numbers": [
+        2
+      ],
+      "expect_mitre": [
+        "T1003.001"
+      ],
+      "expect_rules": [
+        100310,
+        100311
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1003.001-2 Dump LSASS.exe Memory using comsvcs.dll\r\n\r\nNo Preqs Defined",
+      "t0_utc": "2026-08-18T17:17:49.213772+00:00",
+      "t1_utc": "2026-08-18T17:17:56.128407+00:00",
+      "duration_s": 6.91,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1003.001-2 Dump LSASS.exe Memory using comsvcs.dll\r\n\r\nException calling \"Start\" with \"0\" argument(s): \"Access is denied\"\r\nAt C:\\AtomicRedTeam\\invoke-atomicredteam\\Private\\Invoke-Process.ps1:45 char:17\r\n+                 $process.Start() > $null\r\n+                 ~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : NotSpecified: (:) [], MethodInvocationException\r\n    + FullyQualifiedErrorId : Win32Exception\r\n \r\nExit code: \r\nDone executing test: \r\nT1003.001-2 Dump LSASS.exe Memory using comsvcs.dll",
+      "error_stream": [],
+      "defender_blocked": [
+        {
+          "time_utc": "2026-08-18T17:17:54",
+          "threat_id": "2147793100",
+          "resources": "CmdLine:_C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe & {C:\\Windows\\System32\\rundll32.exe C:\\windows\\System32\\comsvcs.dll, MiniDump (Get-Process lsass).id $env:TEMP\\lsass-comsvcs.dmp full}"
+        }
+      ]
+    },
+    {
+      "id": "A3",
+      "name": "Registry Run key persistence",
+      "atomic": "T1547.001",
+      "mode": "atomic",
+      "test_numbers": [
+        1
+      ],
+      "expect_mitre": [
+        "T1547.001"
+      ],
+      "expect_rules": [
+        100333,
+        100334,
+        100336
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1547.001-1 Reg Key Run\r\n\r\nNo Preqs Defined",
+      "t0_utc": "2026-08-18T17:21:05.270121+00:00",
+      "t1_utc": "2026-08-18T17:21:13.901252+00:00",
+      "duration_s": 8.63,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1547.001-1 Reg Key Run\r\n\r\nThe operation completed successfully.\r\nExit code: 0\r\nDone executing test: \r\nT1547.001-1 Reg Key Run",
+      "error_stream": [],
+      "defender_blocked": null
+    },
+    {
+      "id": "A4",
+      "name": "Obfuscated PowerShell execution",
+      "atomic": "T1059.001",
+      "mode": "atomic",
+      "test_numbers": [
+        15
+      ],
+      "expect_mitre": [
+        "T1059.001"
+      ],
+      "expect_rules": [
+        100100,
+        100101,
+        100102
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1059.001-15 ATHPowerShellCommandLineParameter -EncodedCommand parameter variations\r\n\r\nAttempting to satisfy prereq: \r\nThe AtomicTestHarnesses module must be installed and Out-ATHPowerShellCommandLineParameter must be exported in the \r\nmodule.\r\n\r\nWARNING: Unable to resolve package source 'https://www.powershellgallery.com/api/v2'.\r\nPackageManagement\\Install-Package : No match was found for the specified search criteria and module name \r\n'AtomicTestHarnesses'. Try Get-PSRepository to see all available registered module repositories.\r\nAt C:\\Program Files\\WindowsPowerShell\\Modules\\PowerShellGet\\1.0.0.1\\PSModule.psm1:1809 char:21\r\n+ ...          $null = PackageManagement\\Install-Package @PSBoundParameters\r\n+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : ObjectNotFound: (Microsoft.Power....InstallPackage:InstallPackage) [Install-Package], Ex \r\n   ception\r\n    + FullyQualifiedErrorId : NoMatchFoundForCriteria,Microsoft.PowerShell.PackageManagement.Cmdlets.InstallPackage\r\nFailed to meet prereq: The AtomicTestHarnesses module must be installed and Out-ATHPowerShellCommandLineParameter must \r\nbe exported in the module.",
+      "t0_utc": "2026-08-18T17:25:36.049856+00:00",
+      "t1_utc": "2026-08-18T17:25:43.538400+00:00",
+      "duration_s": 7.49,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1059.001-15 ATHPowerShellCommandLineParameter -EncodedCommand parameter variations\r\n\r\nOut-ATHPowerShellCommandLineParameter : The term 'Out-ATHPowerShellCommandLineParameter' is not recognized as the name \r\nof a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, \r\nverify that the path is correct and try again.\r\nAt line:1 char:4\r\n+ & {Out-ATHPowerShellCommandLineParameter -CommandLineSwitchType Hyphe ...\r\n+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : ObjectNotFound: (Out-ATHPowerShellCommandLineParameter:String) [], CommandNotFoundExcept \r\n   ion\r\n    + FullyQualifiedErrorId : CommandNotFoundException\r\nExit code: 0\r\nDone executing test: \r\nT1059.001-15 ATHPowerShellCommandLineParameter -EncodedCommand parameter variations",
+      "error_stream": [],
+      "defender_blocked": null
+    },
+    {
+      "id": "A5",
+      "name": "Shadow copy deletion (vssadmin)",
+      "atomic": "T1490",
+      "mode": "atomic",
+      "test_numbers": [
+        1
+      ],
+      "expect_mitre": [
+        "T1490"
+      ],
+      "expect_rules": [
+        100401
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1490-1 Windows - Delete Volume Shadow Copies\r\n\r\nAttempting to satisfy prereq: \r\nCreate volume shadow copy of C:\\ . This prereq command only works on Windows Server or Windows 8.\r\n\r\nvssadmin 1.1 - Volume Shadow Copy Service administrative command-line tool\r\n(C) Copyright 2001-2013 Microsoft Corp.\r\nError: Invalid command.\r\n \r\n---- Commands Supported ----\r\nDelete Shadows        - Delete volume shadow copies\r\nList Providers        - List registered volume shadow copy providers\r\nList Shadows          - List existing volume shadow copies\r\nList ShadowStorage    - List volume shadow copy storage associations\r\nList Volumes          - List volumes eligible for shadow copies\r\nList Writers          - List subscribed volume shadow copy writers\r\nResize ShadowStorage  - Resize a volume shadow copy storage association\r\nFailed to meet prereq: Create volume shadow copy of C:\\ . This prereq command only works on Windows Server or Windows 8.",
+      "t0_utc": "2026-08-18T17:28:55.819276+00:00",
+      "t1_utc": "2026-08-18T17:29:06.953619+00:00",
+      "duration_s": 11.13,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1490-1 Windows - Delete Volume Shadow Copies\r\n\r\nvssadmin 1.1 - Volume Shadow Copy Service administrative command-line tool\r\n(C) Copyright 2001-2013 Microsoft Corp.\r\nNo items found that satisfy the query.\r\nExit code: 1\r\nDone executing test: \r\nT1490-1 Windows - Delete Volume Shadow Copies",
+      "error_stream": [],
+      "defender_blocked": null
+    },
+    {
+      "id": "A6",
+      "name": "Backup catalog deletion (wbadmin)",
+      "atomic": "T1490",
+      "mode": "atomic",
+      "test_numbers": [
+        3
+      ],
+      "expect_mitre": [
+        "T1490"
+      ],
+      "expect_rules": [
+        100409
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1490-3 Windows - wbadmin Delete Windows Backup Catalog\r\n\r\nNo Preqs Defined",
+      "t0_utc": "2026-08-18T17:32:13.073917+00:00",
+      "t1_utc": "2026-08-18T17:32:19.966746+00:00",
+      "duration_s": 6.89,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1490-3 Windows - wbadmin Delete Windows Backup Catalog\r\n\r\nwbadmin 1.0 - Backup command-line tool\r\n(C) Copyright Microsoft Corporation. All rights reserved.\r\nThe backup catalog has been successfully deleted.\r\nExit code: 0\r\nDone executing test: \r\nT1490-3 Windows - wbadmin Delete Windows Backup Catalog",
+      "error_stream": [],
+      "defender_blocked": null
+    },
+    {
+      "id": "A7",
+      "name": "Event log clearing",
+      "atomic": "T1070.001",
+      "mode": "custom",
+      "test_numbers": null,
+      "expect_mitre": [
+        "T1070.001"
+      ],
+      "expect_rules": [
+        100404
+      ],
+      "window_s": 240,
+      "t0_utc": "2026-08-18T17:35:21.979218+00:00",
+      "t1_utc": "2026-08-18T17:35:25.619232+00:00",
+      "duration_s": 3.64,
+      "exec_error": false,
+      "output": "custom step executed: wevtutil cl Application",
+      "error_stream": [],
+      "defender_blocked": null
+    }
+  ]
+}

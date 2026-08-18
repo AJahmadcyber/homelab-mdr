@@ -1,0 +1,774 @@
+{
+  "chain_id": "atomic-automated",
+  "chain_name": "Atomic Red Team \u2014 automated coverage probe",
+  "target": {
+    "host": "win-ep",
+    "agent_id": "001",
+    "agent_ip": "10.10.10.20"
+  },
+  "limitations": [
+    "Execution over WinRM makes the parent process wsmprovhost.exe rather than an interactive shell. Rules keyed on ParentImage will behave differently here than under manual execution. The rules in this lab key on commandLine, so they are unaffected \u2014 but a future ParentImage rule must be validated manually as well.\n",
+    "Defender real-time protection must be ON for an honest run. A prevented technique is a valid outcome and is recorded as such, not retried with protection disabled.\n"
+  ],
+  "run_start_utc": "2026-08-18T17:12:39.788291+00:00",
+  "run_end_utc": "2026-08-18T17:38:27.860718+00:00",
+  "cleanup": false,
+  "steps": [
+    {
+      "id": "A1",
+      "name": "Network service discovery",
+      "atomic": "T1046",
+      "mode": "atomic",
+      "test_numbers": [
+        10
+      ],
+      "expect_mitre": [
+        "T1046"
+      ],
+      "expect_rules": [
+        100320
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1046-10 Port-Scanning /24 Subnet with PowerShell\r\n\r\nNo Preqs Defined",
+      "t0_utc": "2026-08-18T17:12:44.192914+00:00",
+      "t1_utc": "2026-08-18T17:14:42.737726+00:00",
+      "duration_s": 118.54,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1046-10 Port-Scanning /24 Subnet with PowerShell\r\n\r\n[i] Using Interface Ethernet\r\n[i] Base IP-Address for Subnet: 10.10.10.20\r\n[i] Assuming /24 subnet. scanning 10.10.10.'1' to 10.10.10.'254'\r\nPort 445 is open on 10.10.10.20\r\nExit code: 0\r\nDone executing test: \r\nT1046-10 Port-Scanning /24 Subnet with PowerShell",
+      "error_stream": [],
+      "defender_blocked": null,
+      "score": {
+        "grade": 0,
+        "grade_label": "BLIND",
+        "expected_rules": [
+          "100320"
+        ],
+        "expected_fired": [],
+        "expected_missing": [
+          "100320"
+        ],
+        "other_custom_rules": [],
+        "generic_rules": [],
+        "alert_count": 0,
+        "unrelated_rules": [
+          "100101",
+          "100102",
+          "100331",
+          "67028",
+          "91815",
+          "91816",
+          "91819",
+          "91820",
+          "91822",
+          "92052",
+          "92110",
+          "92151",
+          "92205",
+          "92213",
+          "92657"
+        ],
+        "unrelated_count": 70,
+        "detection_latency_s": null,
+        "latency_basis": "seconds from end of attack execution to first matching alert",
+        "matched_alerts": [],
+        "generic_alerts": []
+      }
+    },
+    {
+      "id": "A2",
+      "name": "LSASS memory dump via comsvcs",
+      "atomic": "T1003.001",
+      "mode": "atomic",
+      "test_numbers": [
+        2
+      ],
+      "expect_mitre": [
+        "T1003.001"
+      ],
+      "expect_rules": [
+        100310,
+        100311
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1003.001-2 Dump LSASS.exe Memory using comsvcs.dll\r\n\r\nNo Preqs Defined",
+      "t0_utc": "2026-08-18T17:17:49.213772+00:00",
+      "t1_utc": "2026-08-18T17:17:56.128407+00:00",
+      "duration_s": 6.91,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1003.001-2 Dump LSASS.exe Memory using comsvcs.dll\r\n\r\nException calling \"Start\" with \"0\" argument(s): \"Access is denied\"\r\nAt C:\\AtomicRedTeam\\invoke-atomicredteam\\Private\\Invoke-Process.ps1:45 char:17\r\n+                 $process.Start() > $null\r\n+                 ~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : NotSpecified: (:) [], MethodInvocationException\r\n    + FullyQualifiedErrorId : Win32Exception\r\n \r\nExit code: \r\nDone executing test: \r\nT1003.001-2 Dump LSASS.exe Memory using comsvcs.dll",
+      "error_stream": [],
+      "defender_blocked": [
+        {
+          "time_utc": "2026-08-18T17:17:54",
+          "threat_id": "2147793100",
+          "resources": "CmdLine:_C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe & {C:\\Windows\\System32\\rundll32.exe C:\\windows\\System32\\comsvcs.dll, MiniDump (Get-Process lsass).id $env:TEMP\\lsass-comsvcs.dmp full}"
+        }
+      ],
+      "score": {
+        "grade": 4,
+        "grade_label": "PREVENTED",
+        "reason": "endpoint prevention stopped the technique before it ran",
+        "evidence": [
+          {
+            "time_utc": "2026-08-18T17:17:54",
+            "threat_id": "2147793100",
+            "resources": "CmdLine:_C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe & {C:\\Windows\\System32\\rundll32.exe C:\\windows\\System32\\comsvcs.dll, MiniDump (Get-Process lsass).id $env:TEMP\\lsass-comsvcs.dmp full}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "A3",
+      "name": "Registry Run key persistence",
+      "atomic": "T1547.001",
+      "mode": "atomic",
+      "test_numbers": [
+        1
+      ],
+      "expect_mitre": [
+        "T1547.001"
+      ],
+      "expect_rules": [
+        100333,
+        100334,
+        100336
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1547.001-1 Reg Key Run\r\n\r\nNo Preqs Defined",
+      "t0_utc": "2026-08-18T17:21:05.270121+00:00",
+      "t1_utc": "2026-08-18T17:21:13.901252+00:00",
+      "duration_s": 8.63,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1547.001-1 Reg Key Run\r\n\r\nThe operation completed successfully.\r\nExit code: 0\r\nDone executing test: \r\nT1547.001-1 Reg Key Run",
+      "error_stream": [],
+      "defender_blocked": null,
+      "score": {
+        "grade": 3,
+        "grade_label": "DETECTED",
+        "expected_rules": [
+          "100333",
+          "100334",
+          "100336"
+        ],
+        "expected_fired": [
+          "100333"
+        ],
+        "expected_missing": [
+          "100334",
+          "100336"
+        ],
+        "other_custom_rules": [],
+        "generic_rules": [],
+        "alert_count": 1,
+        "unrelated_rules": [
+          "100101",
+          "100102",
+          "60137",
+          "67028",
+          "91815",
+          "91816",
+          "91819",
+          "91820",
+          "91822",
+          "92041",
+          "92052",
+          "92110",
+          "92151",
+          "92205",
+          "92213",
+          "92657"
+        ],
+        "unrelated_count": 65,
+        "detection_latency_s": 67.08,
+        "latency_basis": "seconds from end of attack execution to first matching alert",
+        "matched_alerts": [
+          {
+            "rule_id": "100333",
+            "level": 6,
+            "description": "ASEP autostart location modified on win-ep by C:\\\\Windows\\\\system32\\\\reg.exe - value: C:\\\\Path\\\\AtomicRedTeam.",
+            "mitre": [
+              "T1547.001"
+            ],
+            "ts": "2026-08-18T17:22:20.986Z",
+            "latency_s": 67.08,
+            "latency_from_call_s": 75.72
+          }
+        ],
+        "generic_alerts": []
+      }
+    },
+    {
+      "id": "A4",
+      "name": "Obfuscated PowerShell execution",
+      "atomic": "T1059.001",
+      "mode": "atomic",
+      "test_numbers": [
+        15
+      ],
+      "expect_mitre": [
+        "T1059.001"
+      ],
+      "expect_rules": [
+        100100,
+        100101,
+        100102
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1059.001-15 ATHPowerShellCommandLineParameter -EncodedCommand parameter variations\r\n\r\nAttempting to satisfy prereq: \r\nThe AtomicTestHarnesses module must be installed and Out-ATHPowerShellCommandLineParameter must be exported in the \r\nmodule.\r\n\r\nWARNING: Unable to resolve package source 'https://www.powershellgallery.com/api/v2'.\r\nPackageManagement\\Install-Package : No match was found for the specified search criteria and module name \r\n'AtomicTestHarnesses'. Try Get-PSRepository to see all available registered module repositories.\r\nAt C:\\Program Files\\WindowsPowerShell\\Modules\\PowerShellGet\\1.0.0.1\\PSModule.psm1:1809 char:21\r\n+ ...          $null = PackageManagement\\Install-Package @PSBoundParameters\r\n+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : ObjectNotFound: (Microsoft.Power....InstallPackage:InstallPackage) [Install-Package], Ex \r\n   ception\r\n    + FullyQualifiedErrorId : NoMatchFoundForCriteria,Microsoft.PowerShell.PackageManagement.Cmdlets.InstallPackage\r\nFailed to meet prereq: The AtomicTestHarnesses module must be installed and Out-ATHPowerShellCommandLineParameter must \r\nbe exported in the module.",
+      "t0_utc": "2026-08-18T17:25:36.049856+00:00",
+      "t1_utc": "2026-08-18T17:25:43.538400+00:00",
+      "duration_s": 7.49,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1059.001-15 ATHPowerShellCommandLineParameter -EncodedCommand parameter variations\r\n\r\nOut-ATHPowerShellCommandLineParameter : The term 'Out-ATHPowerShellCommandLineParameter' is not recognized as the name \r\nof a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, \r\nverify that the path is correct and try again.\r\nAt line:1 char:4\r\n+ & {Out-ATHPowerShellCommandLineParameter -CommandLineSwitchType Hyphe ...\r\n+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : ObjectNotFound: (Out-ATHPowerShellCommandLineParameter:String) [], CommandNotFoundExcept \r\n   ion\r\n    + FullyQualifiedErrorId : CommandNotFoundException\r\nExit code: 0\r\nDone executing test: \r\nT1059.001-15 ATHPowerShellCommandLineParameter -EncodedCommand parameter variations",
+      "error_stream": [],
+      "defender_blocked": null,
+      "score": {
+        "grade": 3,
+        "grade_label": "DETECTED",
+        "expected_rules": [
+          "100100",
+          "100101",
+          "100102"
+        ],
+        "expected_fired": [
+          "100100",
+          "100101",
+          "100102"
+        ],
+        "expected_missing": [],
+        "other_custom_rules": [],
+        "generic_rules": [
+          "91822",
+          "92151"
+        ],
+        "alert_count": 18,
+        "unrelated_rules": [
+          "67028",
+          "91815",
+          "91816",
+          "91819",
+          "91820",
+          "92052",
+          "92110",
+          "92154",
+          "92205",
+          "92213",
+          "92657"
+        ],
+        "unrelated_count": 52,
+        "detection_latency_s": 5.58,
+        "latency_basis": "seconds from end of attack execution to first matching alert",
+        "matched_alerts": [
+          {
+            "rule_id": "100101",
+            "level": 8,
+            "description": "PowerShell script performs Base64 encode/decode (possible payload staging) [T1027]",
+            "mitre": [
+              "T1027",
+              "T1059.001"
+            ],
+            "ts": "2026-08-18T17:25:49.117Z",
+            "latency_s": 5.58,
+            "latency_from_call_s": 13.07
+          },
+          {
+            "rule_id": "100102",
+            "level": 12,
+            "description": "PowerShell network download cradle detected (possible payload retrieval) [T1059.001/T1105]",
+            "mitre": [
+              "T1059.001",
+              "T1105"
+            ],
+            "ts": "2026-08-18T17:25:51.098Z",
+            "latency_s": 7.56,
+            "latency_from_call_s": 15.05
+          },
+          {
+            "rule_id": "100102",
+            "level": 12,
+            "description": "PowerShell network download cradle detected (possible payload retrieval) [T1059.001/T1105]",
+            "mitre": [
+              "T1059.001",
+              "T1105"
+            ],
+            "ts": "2026-08-18T17:25:51.525Z",
+            "latency_s": 7.99,
+            "latency_from_call_s": 15.48
+          },
+          {
+            "rule_id": "100100",
+            "level": 10,
+            "description": "PowerShell launched with -EncodedCommand (Base64 obfuscation) [T1059.001/T1027]",
+            "mitre": [
+              "T1059.001",
+              "T1027"
+            ],
+            "ts": "2026-08-18T17:27:00.013Z",
+            "latency_s": 76.47,
+            "latency_from_call_s": 83.96
+          },
+          {
+            "rule_id": "100100",
+            "level": 10,
+            "description": "PowerShell launched with -EncodedCommand (Base64 obfuscation) [T1059.001/T1027]",
+            "mitre": [
+              "T1059.001",
+              "T1027"
+            ],
+            "ts": "2026-08-18T17:27:00.083Z",
+            "latency_s": 76.54,
+            "latency_from_call_s": 84.03
+          },
+          {
+            "rule_id": "100101",
+            "level": 8,
+            "description": "PowerShell script performs Base64 encode/decode (possible payload staging) [T1027]",
+            "mitre": [
+              "T1027",
+              "T1059.001"
+            ],
+            "ts": "2026-08-18T17:28:50.476Z",
+            "latency_s": 186.94,
+            "latency_from_call_s": 194.43
+          },
+          {
+            "rule_id": "100102",
+            "level": 12,
+            "description": "PowerShell network download cradle detected (possible payload retrieval) [T1059.001/T1105]",
+            "mitre": [
+              "T1059.001",
+              "T1105"
+            ],
+            "ts": "2026-08-18T17:28:52.344Z",
+            "latency_s": 188.81,
+            "latency_from_call_s": 196.29
+          },
+          {
+            "rule_id": "100102",
+            "level": 12,
+            "description": "PowerShell network download cradle detected (possible payload retrieval) [T1059.001/T1105]",
+            "mitre": [
+              "T1059.001",
+              "T1105"
+            ],
+            "ts": "2026-08-18T17:28:52.725Z",
+            "latency_s": 189.19,
+            "latency_from_call_s": 196.68
+          }
+        ],
+        "generic_alerts": [
+          {
+            "rule_id": "92151",
+            "level": 12,
+            "description": "Binary loaded PowerShell automation library - Possible unmanaged Powershell execution by suspicious process",
+            "mitre": [
+              "T1059.001"
+            ],
+            "ts": "2026-08-18T17:25:47.647Z",
+            "latency_s": 4.11,
+            "latency_from_call_s": 11.6
+          },
+          {
+            "rule_id": "91822",
+            "level": 12,
+            "description": "Powershell script used \"Invoke-command\" cmdlet to execute sub script",
+            "mitre": [
+              "T1059.001"
+            ],
+            "ts": "2026-08-18T17:25:51.769Z",
+            "latency_s": 8.23,
+            "latency_from_call_s": 15.72
+          },
+          {
+            "rule_id": "91822",
+            "level": 12,
+            "description": "Powershell script used \"Invoke-command\" cmdlet to execute sub script",
+            "mitre": [
+              "T1059.001"
+            ],
+            "ts": "2026-08-18T17:25:51.956Z",
+            "latency_s": 8.42,
+            "latency_from_call_s": 15.91
+          },
+          {
+            "rule_id": "91822",
+            "level": 12,
+            "description": "Powershell script used \"Invoke-command\" cmdlet to execute sub script",
+            "mitre": [
+              "T1059.001"
+            ],
+            "ts": "2026-08-18T17:25:52.701Z",
+            "latency_s": 9.16,
+            "latency_from_call_s": 16.65
+          },
+          {
+            "rule_id": "92151",
+            "level": 12,
+            "description": "Binary loaded PowerShell automation library - Possible unmanaged Powershell execution by suspicious process",
+            "mitre": [
+              "T1059.001"
+            ],
+            "ts": "2026-08-18T17:26:39.698Z",
+            "latency_s": 56.16,
+            "latency_from_call_s": 63.65
+          }
+        ]
+      }
+    },
+    {
+      "id": "A5",
+      "name": "Shadow copy deletion (vssadmin)",
+      "atomic": "T1490",
+      "mode": "atomic",
+      "test_numbers": [
+        1
+      ],
+      "expect_mitre": [
+        "T1490"
+      ],
+      "expect_rules": [
+        100401
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1490-1 Windows - Delete Volume Shadow Copies\r\n\r\nAttempting to satisfy prereq: \r\nCreate volume shadow copy of C:\\ . This prereq command only works on Windows Server or Windows 8.\r\n\r\nvssadmin 1.1 - Volume Shadow Copy Service administrative command-line tool\r\n(C) Copyright 2001-2013 Microsoft Corp.\r\nError: Invalid command.\r\n \r\n---- Commands Supported ----\r\nDelete Shadows        - Delete volume shadow copies\r\nList Providers        - List registered volume shadow copy providers\r\nList Shadows          - List existing volume shadow copies\r\nList ShadowStorage    - List volume shadow copy storage associations\r\nList Volumes          - List volumes eligible for shadow copies\r\nList Writers          - List subscribed volume shadow copy writers\r\nResize ShadowStorage  - Resize a volume shadow copy storage association\r\nFailed to meet prereq: Create volume shadow copy of C:\\ . This prereq command only works on Windows Server or Windows 8.",
+      "t0_utc": "2026-08-18T17:28:55.819276+00:00",
+      "t1_utc": "2026-08-18T17:29:06.953619+00:00",
+      "duration_s": 11.13,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1490-1 Windows - Delete Volume Shadow Copies\r\n\r\nvssadmin 1.1 - Volume Shadow Copy Service administrative command-line tool\r\n(C) Copyright 2001-2013 Microsoft Corp.\r\nNo items found that satisfy the query.\r\nExit code: 1\r\nDone executing test: \r\nT1490-1 Windows - Delete Volume Shadow Copies",
+      "error_stream": [],
+      "defender_blocked": null,
+      "score": {
+        "grade": 3,
+        "grade_label": "DETECTED",
+        "expected_rules": [
+          "100401"
+        ],
+        "expected_fired": [
+          "100401"
+        ],
+        "expected_missing": [],
+        "other_custom_rules": [],
+        "generic_rules": [],
+        "alert_count": 2,
+        "unrelated_rules": [
+          "100101",
+          "100102",
+          "60106",
+          "60702",
+          "67028",
+          "91815",
+          "91816",
+          "91819",
+          "91820",
+          "91822",
+          "92052",
+          "92151",
+          "92205",
+          "92213",
+          "92657"
+        ],
+        "unrelated_count": 58,
+        "detection_latency_s": 43.44,
+        "latency_basis": "seconds from end of attack execution to first matching alert",
+        "matched_alerts": [
+          {
+            "rule_id": "100401",
+            "level": 14,
+            "description": "Inhibit System Recovery: vssadmin delete shadows executed",
+            "mitre": [
+              "T1490"
+            ],
+            "ts": "2026-08-18T17:29:50.398Z",
+            "latency_s": 43.44,
+            "latency_from_call_s": 54.58
+          },
+          {
+            "rule_id": "100401",
+            "level": 14,
+            "description": "Inhibit System Recovery: vssadmin delete shadows executed",
+            "mitre": [
+              "T1490"
+            ],
+            "ts": "2026-08-18T17:29:50.446Z",
+            "latency_s": 43.49,
+            "latency_from_call_s": 54.63
+          }
+        ],
+        "generic_alerts": []
+      }
+    },
+    {
+      "id": "A6",
+      "name": "Backup catalog deletion (wbadmin)",
+      "atomic": "T1490",
+      "mode": "atomic",
+      "test_numbers": [
+        3
+      ],
+      "expect_mitre": [
+        "T1490"
+      ],
+      "expect_rules": [
+        100409
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1490-3 Windows - wbadmin Delete Windows Backup Catalog\r\n\r\nNo Preqs Defined",
+      "t0_utc": "2026-08-18T17:32:13.073917+00:00",
+      "t1_utc": "2026-08-18T17:32:19.966746+00:00",
+      "duration_s": 6.89,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1490-3 Windows - wbadmin Delete Windows Backup Catalog\r\n\r\nwbadmin 1.0 - Backup command-line tool\r\n(C) Copyright Microsoft Corporation. All rights reserved.\r\nThe backup catalog has been successfully deleted.\r\nExit code: 0\r\nDone executing test: \r\nT1490-3 Windows - wbadmin Delete Windows Backup Catalog",
+      "error_stream": [],
+      "defender_blocked": null,
+      "score": {
+        "grade": 3,
+        "grade_label": "DETECTED",
+        "expected_rules": [
+          "100409"
+        ],
+        "expected_fired": [
+          "100409"
+        ],
+        "expected_missing": [],
+        "other_custom_rules": [],
+        "generic_rules": [],
+        "alert_count": 2,
+        "unrelated_rules": [
+          "100101",
+          "100102",
+          "60106",
+          "60137",
+          "91815",
+          "91816",
+          "91819",
+          "91820",
+          "91822",
+          "92052",
+          "92110",
+          "92151",
+          "92154",
+          "92205"
+        ],
+        "unrelated_count": 46,
+        "detection_latency_s": 44.72,
+        "latency_basis": "seconds from end of attack execution to first matching alert",
+        "matched_alerts": [
+          {
+            "rule_id": "100409",
+            "level": 14,
+            "description": "Inhibit System Recovery: backup catalog or systemstate backup deletion (wbadmin)",
+            "mitre": [
+              "T1490"
+            ],
+            "ts": "2026-08-18T17:33:04.689Z",
+            "latency_s": 44.72,
+            "latency_from_call_s": 51.62
+          },
+          {
+            "rule_id": "100409",
+            "level": 14,
+            "description": "Inhibit System Recovery: backup catalog or systemstate backup deletion (wbadmin)",
+            "mitre": [
+              "T1490"
+            ],
+            "ts": "2026-08-18T17:33:04.786Z",
+            "latency_s": 44.82,
+            "latency_from_call_s": 51.71
+          }
+        ],
+        "generic_alerts": []
+      }
+    },
+    {
+      "id": "A7",
+      "name": "Event log clearing",
+      "atomic": "T1070.001",
+      "mode": "custom",
+      "test_numbers": null,
+      "expect_mitre": [
+        "T1070.001"
+      ],
+      "expect_rules": [
+        100404
+      ],
+      "window_s": 240,
+      "t0_utc": "2026-08-18T17:35:21.979218+00:00",
+      "t1_utc": "2026-08-18T17:35:25.619232+00:00",
+      "duration_s": 3.64,
+      "exec_error": false,
+      "output": "custom step executed: wevtutil cl Application",
+      "error_stream": [],
+      "defender_blocked": null,
+      "score": {
+        "grade": 3,
+        "grade_label": "DETECTED",
+        "expected_rules": [
+          "100404"
+        ],
+        "expected_fired": [
+          "100404"
+        ],
+        "expected_missing": [],
+        "other_custom_rules": [],
+        "generic_rules": [],
+        "alert_count": 2,
+        "unrelated_rules": [
+          "60137",
+          "63104",
+          "67028",
+          "91815",
+          "92052",
+          "92110",
+          "92151",
+          "92205",
+          "92657",
+          "92910"
+        ],
+        "unrelated_count": 33,
+        "detection_latency_s": 0.0,
+        "latency_basis": "seconds from end of attack execution to first matching alert",
+        "matched_alerts": [
+          {
+            "rule_id": "100404",
+            "level": 13,
+            "description": "Indicator Removal: Windows event log cleared via wevtutil",
+            "mitre": [
+              "T1070.001"
+            ],
+            "ts": "2026-08-18T17:35:25.414Z",
+            "latency_s": -0.21,
+            "latency_from_call_s": 3.43
+          },
+          {
+            "rule_id": "100404",
+            "level": 13,
+            "description": "Indicator Removal: Windows event log cleared via wevtutil",
+            "mitre": [
+              "T1070.001"
+            ],
+            "ts": "2026-08-18T17:35:25.448Z",
+            "latency_s": -0.17,
+            "latency_from_call_s": 3.47
+          }
+        ],
+        "generic_alerts": []
+      }
+    },
+    {
+      "id": "A8",
+      "name": "Network discovery via scanner binary",
+      "atomic": "T1046",
+      "mode": "atomic",
+      "test_numbers": [
+        3
+      ],
+      "expect_mitre": [
+        "T1046"
+      ],
+      "expect_rules": [
+        100320
+      ],
+      "window_s": 240,
+      "prereq_error": false,
+      "prereq_output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nGetPrereq's for: \r\nT1046-3 Port Scan NMap for Windows\r\n\r\nAttempting to satisfy prereq: \r\nNMap must be installed\r\n\r\nPrereq already met: \r\nNMap must be installed",
+      "t0_utc": "2026-08-18T17:44:10.328433+00:00",
+      "t1_utc": "2026-08-18T17:44:26.896063+00:00",
+      "duration_s": 16.57,
+      "exec_error": false,
+      "output": "PathToAtomicsFolder = C:\\AtomicRedTeam\\atomics\r\n\r\nExecuting test: \r\nT1046-3 Port Scan NMap for Windows\r\n\r\nStarting Nmap 7.95 ( https://nmap.org ) at 2026-08-18 20:44 Jordan Standard Time\r\nNmap scan report for localhost.lab.local (127.0.0.1)\r\nHost is up (0.00069s latency).\r\nNot shown: 996 closed tcp ports (reset)\r\nPORT     STATE SERVICE\r\n135/tcp  open  msrpc\r\n445/tcp  open  microsoft-ds\r\n5357/tcp open  wsdapi\r\n5985/tcp open  wsman\r\nNmap done: 1 IP address (1 host up) scanned in 7.84 seconds\r\nExit code: 0\r\nDone executing test: \r\nT1046-3 Port Scan NMap for Windows",
+      "error_stream": [],
+      "defender_blocked": null,
+      "score": {
+        "grade": 3,
+        "grade_label": "DETECTED",
+        "expected_rules": [
+          "100320"
+        ],
+        "expected_fired": [
+          "100320"
+        ],
+        "expected_missing": [],
+        "other_custom_rules": [],
+        "generic_rules": [],
+        "alert_count": 3,
+        "unrelated_rules": [
+          "100101",
+          "100102",
+          "60137",
+          "91815",
+          "91816",
+          "91819",
+          "91820",
+          "91822",
+          "92052",
+          "92151",
+          "92154",
+          "92205",
+          "92213"
+        ],
+        "unrelated_count": 50,
+        "detection_latency_s": 0.0,
+        "latency_basis": "seconds from end of attack execution to first matching alert",
+        "matched_alerts": [
+          {
+            "rule_id": "100320",
+            "level": 10,
+            "description": "Network Service Discovery: scanner invocation in command line \u2014 \\\"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1",
+            "mitre": [
+              "T1046"
+            ],
+            "ts": "2026-08-18T17:44:26.634Z",
+            "latency_s": -0.26,
+            "latency_from_call_s": 16.31
+          },
+          {
+            "rule_id": "100320",
+            "level": 10,
+            "description": "Network Service Discovery: scanner invocation in command line \u2014 \\\"C:\\\\Windows\\\\system32\\\\cmd.exe\\\" /c \\\"nmap 2",
+            "mitre": [
+              "T1046"
+            ],
+            "ts": "2026-08-18T17:44:27.086Z",
+            "latency_s": 0.19,
+            "latency_from_call_s": 16.76
+          },
+          {
+            "rule_id": "100320",
+            "level": 10,
+            "description": "Network Service Discovery: scanner invocation in command line \u2014 \\\"powershell.exe\\\" &amp; {nmap 127.0.0.1} (T10",
+            "mitre": [
+              "T1046"
+            ],
+            "ts": "2026-08-18T17:45:16.258Z",
+            "latency_s": 49.36,
+            "latency_from_call_s": 65.93
+          }
+        ],
+        "generic_alerts": []
+      }
+    }
+  ],
+  "summary": {
+    "chain_id": "atomic-automated",
+    "scored_utc": "2026-08-18T17:40:24.147419Z",
+    "steps_scored": 8,
+    "coverage_points": 21,
+    "coverage_max": 24,
+    "coverage_pct": 87.5,
+    "by_grade": {
+      "PREVENTED": 1,
+      "DETECTED": 5,
+      "GENERIC": 0,
+      "LOGGED": 0,
+      "BLIND": 1
+    },
+    "note": "A8 executed in a separate run to exercise a second procedure for T1046"
+  }
+}
