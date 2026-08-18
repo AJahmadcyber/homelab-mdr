@@ -1,0 +1,168 @@
+<!--
+  Phase 7 Stage Impact (7-F) - GentleKiller / The Gentlemen
+  Behavioral detection for the Impact chain: T1082 -> T1490 -> T1489 -> T1486 -> T1070.001
+  IDs 100400-100407
+-->
+<group name="windows,impact,gentlekiller,">
+
+  <!-- T1082 - Volume enumeration (Get-WmiObject Win32_Volume) -->
+  <rule id="100400" level="8">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)win32_volume</field>
+    <description>Impact recon: volume enumeration via Win32_Volume (GentleKiller pre-encryption)</description>
+    <mitre>
+      <id>T1082</id>
+    </mitre>
+  </rule>
+
+  <!-- T1490 - Shadow copy deletion via vssadmin -->
+  <rule id="100401" level="14">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)vssadmin(\.exe)?.{0,40}delete.{0,20}shadows</field>
+    <description>Inhibit System Recovery: vssadmin delete shadows executed</description>
+    <mitre>
+      <id>T1490</id>
+    </mitre>
+  </rule>
+
+  <!-- T1490 - Shadow copy deletion via WMIC -->
+  <rule id="100402" level="14">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)wmic(\.exe)?.{0,40}shadowcopy.{0,20}delete</field>
+    <description>Inhibit System Recovery: wmic shadowcopy delete executed</description>
+    <mitre>
+      <id>T1490</id>
+    </mitre>
+  </rule>
+
+  <!-- T1489 - Service stop targeting security or backup services -->
+  <rule id="100403" level="12">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)(net(\.exe)?\s+stop|sc(\.exe)?\s+stop|stop-service).{0,60}(windefend|wazuh|sense|mssql|sql|veeam|vss|backup|acronis|sophos|mcafee)</field>
+    <description>Service Stop: security or backup service termination attempt</description>
+    <mitre>
+      <id>T1489</id>
+    </mitre>
+  </rule>
+
+  <!-- T1070.001 - Event log clearing -->
+  <rule id="100404" level="13">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)wevtutil(\.exe)?\s+(cl|clear-log)\s</field>
+    <description>Indicator Removal: Windows event log cleared via wevtutil</description>
+    <mitre>
+      <id>T1070.001</id>
+    </mitre>
+  </rule>
+
+  <!-- T1486 - Single file change inside the monitored impact scope (base for frequency) -->
+  <rule id="100405" level="3">
+    <if_sid>550,553,554</if_sid>
+    <field name="file" type="pcre2">(?i)ImpactTest</field>
+    <description>File integrity change in monitored impact scope</description>
+    <mitre>
+      <id>T1486</id>
+    </mitre>
+  </rule>
+
+  <!-- T1486 - Mass file modification burst = encryption behaviour -->
+  <rule id="100406" level="14" frequency="15" timeframe="120">
+    <if_matched_sid>100405</if_matched_sid>
+    <description>Data Encrypted for Impact: mass file modification burst detected (ransomware behaviour)</description>
+    <mitre>
+      <id>T1486</id>
+    </mitre>
+  </rule>
+
+  <!-- T1486 - Ransom note / encrypted extension artifact -->
+  <rule id="100407" level="14">
+    <if_sid>550,554</if_sid>
+    <field name="file" type="pcre2">(?i)(README-GENTLEMEN\.txt|\.umc16h$)</field>
+    <description>Data Encrypted for Impact: ransom note or encrypted-extension artifact created</description>
+    <mitre>
+      <id>T1486</id>
+    </mitre>
+  </rule>
+
+  <!-- T1082 - Volume enumeration seen via PowerShell Module Logging (EID 4103) -->
+  <rule id="100408" level="8">
+    <if_sid>60009,91802,91803</if_sid>
+    <field name="win.system.eventID">^4103$</field>
+    <match>Win32_Volume</match>
+    <description>Impact recon: volume enumeration via Win32_Volume (PowerShell module logging)</description>
+    <mitre>
+      <id>T1082</id>
+    </mitre>
+  </rule>
+
+  <!-- T1490 - Backup catalog / systemstate backup destruction (wbadmin) -->
+  <rule id="100409" level="14">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)wbadmin(\.exe)?.{0,30}delete.{0,30}(catalog|systemstatebackup|backup)</field>
+    <description>Inhibit System Recovery: backup catalog or systemstate backup deletion (wbadmin)</description>
+    <mitre>
+      <id>T1490</id>
+    </mitre>
+  </rule>
+
+  <!-- T1490 - Boot recovery options disabled (bcdedit) -->
+  <rule id="100410" level="13">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)bcdedit(\.exe)?.{0,40}(recoveryenabled\s+no|bootstatuspolicy\s+ignoreallfailures)</field>
+    <description>Inhibit System Recovery: Windows recovery console disabled via bcdedit</description>
+    <mitre>
+      <id>T1490</id>
+    </mitre>
+  </rule>
+
+  <!-- T1490 - Shadow copy deletion via diskshadow LOLBin -->
+  <rule id="100411" level="14">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)diskshadow.{0,60}delete\s+shadows</field>
+    <description>Inhibit System Recovery: shadow copy deletion via diskshadow LOLBin</description>
+    <mitre>
+      <id>T1490</id>
+    </mitre>
+  </rule>
+
+  <!-- T1490 - Shadow storage resize (silently discards existing shadow copies) -->
+  <rule id="100412" level="12">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)vssadmin(\.exe)?.{0,30}resize\s+shadowstorage</field>
+    <description>Inhibit System Recovery: shadow storage resized (discards existing shadow copies)</description>
+    <mitre>
+      <id>T1490</id>
+    </mitre>
+  </rule>
+
+  <!-- T1490 - System Restore disabled via registry -->
+  <rule id="100413" level="13">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)SystemRestore.{0,40}(DisableSR|DisableConfig)</field>
+    <description>Inhibit System Recovery: System Restore disabled via registry</description>
+    <mitre>
+      <id>T1490</id>
+    </mitre>
+  </rule>
+
+  <!-- T1490 - System Restore scheduled task disabled -->
+  <rule id="100414" level="12">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)schtasks(\.exe)?.{0,60}SystemRestore.{0,20}(disable|/Change)</field>
+    <description>Inhibit System Recovery: System Restore scheduled task disabled</description>
+    <mitre>
+      <id>T1490</id>
+    </mitre>
+  </rule>
+
+  <!-- T1490 - Shadow copy deletion via PowerShell WMI (non-wmic writer) -->
+  <rule id="100415" level="14">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.commandLine" type="pcre2">(?i)win32_shadowcopy.{0,80}(\.Delete\(\)|Remove-WmiObject|Remove-CimInstance|Delete-WmiObject)</field>
+    <description>Inhibit System Recovery: shadow copy deletion via PowerShell WMI (writer-agnostic)</description>
+    <mitre>
+      <id>T1490</id>
+    </mitre>
+  </rule>
+
+</group>
