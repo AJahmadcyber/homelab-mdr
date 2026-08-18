@@ -1040,3 +1040,115 @@ A skewed clock would have silently broken the window; this was checked, not assu
 - **Snapshot still pending** (ThinkPad disk) — required before Stage 7 (Impact).
 - **Cortex org API key** was redacted to `<CORTEX_ORG_API_KEY>` in the exported
   workflow before committing — the tech-debt item; still hardcoded in the live node.
+
+---
+
+# Session - 2026-08-18: Stage 7-F Impact closed - the kill chain reaches its objective
+
+The last stage of the Phase 7 chain. Sixteen rules across five techniques, built
+against real GentleKiller impact tradecraft and validated by two independent
+tools rather than one. Phase 7 is now closed end to end: edge access through to
+encryption, every stage attack -> detection -> SOAR -> ticket.
+
+## Two tools on purpose, and why it mattered
+
+The first pass was a controlled PowerShell encryptor on a throwaway directory,
+staging the documented Gentlemen sequence: volume enumeration, shadow-copy
+deletion via both `vssadmin` and `wmic`, service stop, XOR rewrite with a
+`.umc16h` extension and a ransom note, then `wevtutil cl`. Each step was spawned
+as its own process so Sysmon would record the real command line rather than the
+script's. Eight rules fired.
+
+That result is only as good as the paths the script's author thought of. Replaying
+the same technique through Atomic Red Team's T1490 series invoked six binaries the
+first pass never touched - `wbadmin`, `bcdedit`, `diskshadow`, `schtasks` against
+the System Restore task, the SystemRestore registry keys, and `vssadmin resize
+shadowstorage`. Every one of them landed in Sysmon, reached Wazuh, and matched
+**no custom rule at all**. Only Wazuh's generic 92052/92027 caught them, with no
+technique mapping and no ticket priority.
+
+Seven rules (100409-100415) exist only because a second tool was used. The lesson
+generalises past this stage: **a detection validated by the tool that motivated it
+is validated against itself.** Coverage claims need an independent implementation
+of the same technique, which is exactly the argument for Phase 8.
+
+## Defender stopped the chain - and that is a result, not a failure
+
+Real-time protection was left ON for the first run deliberately. Defender killed
+the PowerShell process mid-encryption and the sequence never reached the log-clear
+step. The detection was `Behavior:Win32/GenShadowCopy!rsm`, severity 5 - a
+**behavioural** verdict, not a signature match, on a script written this session
+that no signature could have covered.
+
+This is the design doc's L1 layer ("enable, don't build") working in practice, and
+it is worth more in the portfolio than a clean run would have been. The Atomic
+replay was then run with real-time protection disabled and exclusions set, because
+the question there was detection coverage, not prevention - two different
+measurements that need two different conditions. Defender was restored afterwards.
+
+## The rules
+
+| Rule | Technique | Detection |
+|---|---|---|
+| 100400 / 100408 | T1082 | `Win32_Volume` enumeration on two channels - Sysmon EID 1 and PowerShell module logging EID 4103 |
+| 100401 / 100402 | T1490 | `vssadmin delete shadows`, `wmic shadowcopy delete` |
+| 100409-100415 | T1490 | `wbadmin delete catalog`, `bcdedit` recovery disable, `diskshadow`, `vssadmin resize shadowstorage`, SystemRestore registry, SR scheduled task, PowerShell WMI deletion |
+| 100403 | T1489 | Security or backup service stop |
+| 100405-100407 | T1486 | FIM base -> frequency burst (15 changes / 120s) -> ransom-note and `.umc16h` artifact |
+| 100404 | T1070.001 | `wevtutil cl` |
+
+Fifteen of sixteen fired live. **100411 (diskshadow) is written but untested** -
+the binary ships only with Windows Server, so on this Win10 client the command
+failed before the process was created and no EID 1 exists to match. A PowerShell-
+logging variant was considered and rejected: it would fire on any script that
+merely mentions the word, trading a real gap for a false-positive source. The rule
+stands as written, documented as untested rather than quietly claimed.
+
+## The T1082 lesson - one technique, two telemetry channels
+
+`Get-WmiObject -Class Win32_Volume` invoked through `Start-Process ... -Command`
+never appeared in the EID 1 command line the way the rule expected; it surfaced in
+PowerShell module logging (EID 4103) instead. The same recon reaches the SIEM
+through a different channel depending on how it was invoked, so 100408 was added
+alongside 100400 rather than replacing it. Two rules, one technique, no assumption
+about which channel carries the evidence.
+
+## Ticket engine - Impact classification
+
+The ticket builder gained the five Impact techniques, an Impact playbook, and a
+narrow behavioural change: **Impact forces Critical regardless of rule level.**
+Destruction of recovery capability is not a High that can wait four hours, and a
+level-12 rule should not be downgraded into one by arithmetic. The ticket also
+carries a `do-not-reboot` label and surfaces the triggering command line directly
+in the detection table, because at this stage the command line *is* the evidence
+and a pivot into the raw alert costs minutes that matter.
+
+T1070.001 got a `playbook_override` rather than the generic Impact plan: log
+clearing is anti-forensics, so its tasks point the analyst at the off-host SIEM
+copy that the local wipe cannot reach.
+
+Validated live - `vssadmin delete shadows` produced
+`[Critical] Impact: Inhibit System Recovery on win-ep - isolate before
+investigating`, SLA 1h, with the full L1 checklist. Enrichment correctly reported
+`skipped`: an Impact detection is local by nature and carries no external
+observable, which is a design outcome, not a gap.
+
+## Snapshots
+
+`pre-impact-clean` was superseded by **`pre-atomic-impact`** (UUID
+`f39376a6-fd65-413c-a4c4-7e237b3ebe17`), taken after the FIM configuration was in
+place so a rollback would not discard it. The old snapshot was then deleted -
+new first, old second, never the reverse. ThinkPad free space rose to 36.4 GB.
+
+## Open items (carried forward)
+
+- **100411 (diskshadow) untested** - needs a Windows Server target, or stays
+  documented as untested. Not a silent gap.
+- **auditd non-interactive SSH capture** - the remaining 7-E gap, unchanged.
+- **Cortex org API key** still hardcoded in the live n8n node; redacted to
+  `<CORTEX_ORG_API_KEY>` in the committed export, as before.
+- **siem VDI maintenance** (~294 GB of snapshots and historical bloat) - still
+  owed a dedicated zero-fill + compact session. Not a blocker for Phase 8.
+- **Impact correlation node** - deliberately deferred. Single Impact rules are
+  already sufficient evidence for a Critical; chaining recovery-destruction to the
+  encryption burst would sharpen the narrative, not the verdict.

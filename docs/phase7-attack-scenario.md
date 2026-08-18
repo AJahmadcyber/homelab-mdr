@@ -4,7 +4,7 @@
 > Design document for Phase 7: a full-lifecycle ransomware intrusion modeled on **The Gentlemen RaaS / GentleKiller** (ESET, June 2026), emulated stage-by-stage against the lab's detection → SOAR → TheHive pipeline.
 >
 > **Repo:** https://github.com/AJahmadcyber/homelab-mdr
-> **Status:** Design/reference document. Stages 0, 1 (execution + persistence), 2, 3, 4 (BYOVD) and 6 are implemented, as is the **L4 resilient layer**. Remaining: stage 5 (Lateral Movement), stage 7 (Impact), and the deepening items (1a, 1b, X).
+> **Status:** Design/reference document. All eight stages (0–7) are implemented, as are the **L4 resilient layer** and the **L0 SIEM self-health** monitor. Remaining: the deepening items only (1a reflective ImageLoad, 1b process hollowing, X LOLBin-out-of-context).
 
 ---
 
@@ -45,7 +45,7 @@ Eight stages, each mapped to ATT&CK. Three techniques cut *across* stages rather
 | 4 | Defense Evasion / BYOVD | T1562.001, T1543.003, T1068 | Load signed-but-vulnerable driver → Ring 0 → terminate EDR/AV (400+ processes) | `sc`, `reg`, `fltmc` | — | ✅ |
 | 5 | Lateral Movement | T1021, T1570, T1484 | Domain-wide spread via GPO; here win-ep → siem | `wmic`, `schtasks`, PsExec-style | ✅ remote injection | ✅ |
 | 6 | C2 | T1071.004 | Go backdoor + DNS beaconing | `nslookup`, `curl` | — | ✅ |
-| 7 | Impact | T1486, T1490, T1489 | Mass encryption + shadow-copy deletion + backup destruction | `vssadmin`, `wbadmin`, `wmic shadowcopy` | ✅ fileless PowerShell encryptor | ✅ |
+| 7 | Impact | T1486, T1490, T1489, T1070.001, T1082 | Volume enumeration → recovery destruction (shadow copies, backup catalogue, System Restore, boot recovery) → mass encryption → event-log clearing | `vssadmin`, `wbadmin`, `wmic`, `bcdedit`, `schtasks`, `wevtutil` | ✅ controlled PowerShell encryptor | ✅ |
 
 **Why the cross-cutting threads matter.** LOLBins work *because* they are signed and trusted — the same reason "the audit log waved them through." Fileless execution is now the single most prevalent technique family (process injection T1055 leads across 1.1M+ malware samples per Picus Red Report 2026) precisely because malicious code runs under a trusted, signed process that defenders can't simply kill. Both reinforce the same lesson: **behavior over signature.**
 
@@ -64,7 +64,7 @@ Not everything comes from Atomic Red Team (which runs isolated single techniques
 | 4 | Defense Evasion / BYOVD | `sc create` + a benign signed driver + **LOLDrivers** sample (load only, **no exploit**) | loldrivers.io | Safe simulation of the detectable sequence; real PoC = Ring 0 risk with zero added detection value |
 | 5 | Lateral Movement | **Sliver** pivoting / **Impacket** wmiexec | Sliver / Impacket | Multiplayer + pivot far stronger than an isolated atomic |
 | 6 | C2 | ✅ existing rules + **Sliver DNS C2** | existing + Sliver | Sliver's real DNS C2 exercises rules 100306/100307 for real |
-| 7 | Impact | Atomic T1486/T1490 + PowerShell encrypt script (test folder only) | Atomic + manual | Simulated encryption on throwaway files only |
+| 7 | Impact | ✅ **controlled PowerShell encryptor** (throwaway directory) + **Atomic Red Team T1490 series** as an independent second tool | manual + Atomic | Two tools on purpose: the encryptor proves the *sequence*, Atomic's independent implementations exposed seven recovery-destruction binaries the first pass never invoked. Implemented (rules 100400–100415) |
 
 **Attacker infrastructure (as built).** All offensive tooling runs on the **ThinkPad host, 10.10.10.2** — the VirtualBox host, architecturally *external* to the pfSense LAN. Nothing offensive is installed on a lab VM, so the victim's telemetry stays clean.
 
@@ -107,8 +107,10 @@ Each rule has a deliberately chosen *type* (behavioral / correlation / frequency
 | 4f | Tampering with blocklist / HVCI / Credential Guard | Behavioral | **rules 100380/100381 — implemented**; fires one step *earlier* than the driver load | ✅ |
 | 5 | Lateral exec inbound to siem | Behavioral | SigmaHQ T1021 + agent 002 | ⏳ |
 | 6 | DNS beaconing | Rate-based | **rules 100306/307 — implemented** | ✅ |
-| 7a | Shadow-copy deletion | Behavioral | Wazuh official 100615–100622 | ⏳ |
-| 7b | Mass file encryption | Frequency | Wazuh official 100627 | ⏳ |
+| 7a | Recovery destruction (all paths) | Behavioral | **rules 100401/100402 + 100409–100415 — implemented**; nine rules, one per documented path (`vssadmin` delete and resize, `wmic`, PowerShell WMI, `wbadmin`, `bcdedit`, System Restore registry and scheduled task, `diskshadow`) | ✅ |
+| 7b | Mass file encryption | Frequency | **rules 100405–100407 — implemented**; FIM base rule feeds a frequency rule (15 changes / 120s) plus an artifact rule on the ransom note and encrypted extension — shape and artifact, not hash | ✅ |
+| 7c | Event-log clearing | Behavioral | **rule 100404 — implemented** (`wevtutil cl`, T1070.001); ticket playbook pivots the analyst to the off-host SIEM copy the local wipe cannot reach | ✅ |
+| 7d | Volume enumeration | Behavioral | **rules 100400/100408 — implemented**; two channels because the same `Win32_Volume` recon surfaces as Sysmon EID 1 or PowerShell module logging (EID 4103) depending on invocation | ✅ |
 | X | LOLBin out of context | Behavioral | SigmaHQ LOLBAS + GTFOBins→Wazuh | ⏳ |
 | **L4** | **Resilient: agent-silence + network-alive** | **Correlation** | **rules 100359–100366 — implemented**; DNS is the liveness channel because it is the one protocol that must traverse the gateway (mTLS to the C2 host is same-subnet and invisible to the sensor — verified) | ✅ |
 
@@ -169,27 +171,27 @@ error on its first use.
 
 ## 8. Implementation status
 
-**Done (earlier phases):**
+**Done:**
+
 - Stage 0 — Initial Access: rules **100300 / 100301 / 100303 / 100304** (scan and vuln-probe detection at the edge) + **100350** (CVE-2024-55591 auth-bypass URI, Suricata→Wazuh).
 - Stage 1a — Execution (fileless): rules **100330 / 100331 / 100332** (csc.exe loader, LOLBin outbound, beaconing confirm; T1055/T1059.001/T1071.001). Proven end-to-end via Sliver C2.
 - Stage 1b — Persistence: rules **100333–100336 + 100338** (ASEP autostart, writer-agnostic via 92300/92302 inheritance; T1547.001). Proven against Sliver Registry-API write (image=powershell.exe, not reg.exe) — catches persistence that Wazuh's reg.exe-bound rules miss. Encoded-payload path fires 100334 (L13). FP suppression **100390** drops benign Base64-like reg-add noise (92041).
 - Stage 2 — Discovery: rule **100320** (behavioral scanner-cmdline, T1046).
 - Stage 3 — Credential Access: rules **100310 / 100311 / 100313** (LSASS dump, comsvcs, LOLBAS esentutl).
+- Stage 4 — Defense Evasion / BYOVD: rules **100340–100343** (kernel driver load from a user-writable path — keyed on path, not signer), **100370 / 100371** (security-tooling termination, single and mass-kill shape), **100380 / 100381** (HVCI / vulnerable-driver-blocklist / Credential Guard tampering, one step earlier than the load). The driver-load↔kill **correlation (4d)** lives in the SOAR layer, not the rule engine.
+- Stage 5 — Lateral Movement: rules **100210 / 100211** (successful SSH publickey login to the SIEM from outside the admin-jump allowlist; CDB `address_match_key`, detect-only on the management plane). Cross-host SOAR correlation ties it to the source host's prior high-severity alert. Root cause of the earlier "never reaches Wazuh" gap: built-in rule 5715 fires at level 3, below threshold — a classification gap, not a collection one.
 - Stage 6 — C2: rules **100306 / 100307** (DNS beaconing, rate-based + allowlist).
+- Stage 7 — Impact: rules **100400–100415** across five techniques — volume enumeration on two channels (**100400** Sysmon EID 1, **100408** PowerShell EID 4103), recovery destruction on nine paths (**100401 / 100402 / 100409–100415**), service stop (**100403**), event-log clearing (**100404**), and mass encryption via FIM base → frequency → artifact (**100405–100407**). Validated by two independent tools; **100411** (diskshadow) is written but untested — the binary ships only with Windows Server.
+- L4 — Resilient detection: rules **100359–100366** (endpoint silence correlated with off-host network liveness — a killed agent told apart from a powered-off host).
+- L0 — SIEM self-health: rules **100395–100399** (the rule engine itself stops evaluating while the container still reports Up; detected and auto-recovered).
 - Response thread: SOAR → TheHive ticket per detection (all stages).
 
 **To build (Phase 7):**
-- Prereq: verify Sysmon logs EID 6 (Driver Load) + EID 7045 on win-ep; tune config if not.
 - Stage 1 (advanced) — remaining: 1a (reflective ImageLoad) + 1b (hollowing EID 1+8+10 correlation). Core fileless + persistence done; these deepen coverage.
-- Stage 4 — BYOVD: 4a (driver load) → 4b (service) → 4c (kill burst) → **4d (correlation, the core)** → 4e (blocklist) → 4f (blocklist/HVCI tampering).
-- Stage 5 — Lateral Movement: win-ep → siem via agent 002.
-- Stage 7 — Impact: 7a (shadow-copy deletion) + 7b (mass encryption).
 - Cross-cutting: X (LOLBin out of context).
-- **L4 — Resilient detection (surviving channel)** — the flagship.
-- Stage 0 — Initial Access on pfSense/Suricata (earliest detection point; can be its own sub-phase).
 - L1 prevention: enable HVCI / Driver Blocklist / ASR on win-ep (recommend-in-ticket, not enforced by SIEM).
 
-**Recommended build order:** 0 (verify Sysmon) → Stage 4 behavioral chain (4a→4d) → L4 → then fill 1, 5, 7, X → enable L1 → wire Stage 0.
+**Remaining work is deepening only.** The kill chain is closed end to end; what is left (1a, 1b, X) adds depth to stages already covered rather than opening new ground. Phase 8 — the detection-coverage engine — will measure this chain as its first subject.
 
 ---
 
