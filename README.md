@@ -304,7 +304,7 @@ homelab-mdr/
 │       ├── soar-block.py                # host-isolation blocker (allowlist + circuit breaker)
 │       └── cron-dns-pipeline            # cron: pull && analyze, every minute
 ├── docs/
-│   ├── architecture.svg / architecture.png
+│   ├── architecture.png                  # lab architecture: network, hosts, traffic paths
 │   ├── phase7-attack-scenario.md        # Phase 7 design doc: threat profile, stage plan, rule sources
 │   ├── phase-progress.md                # phase-by-phase completion tracker
 │   ├── phase5-session2-pipeline.md      # Suricata -> Wazuh pipeline build notes
