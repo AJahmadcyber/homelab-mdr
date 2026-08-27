@@ -42,3 +42,9 @@ detection/coverage-engine/results/score-*.json
 !detection/coverage-engine/results/run-atomic-automated-20260818T174404Z.json
 !detection/coverage-engine/results/score-atomic-automated-baseline.json
 docs/.archive/
+
+# Example environment files are documentation, not secrets — the `.env.*`
+# rule above catches them by accident.
+!*.env.example
+!.env.example
+!**/.env.example

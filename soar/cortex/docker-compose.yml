@@ -19,7 +19,10 @@ services:
     networks: [cortex-net]
 
   cortex:
-    image: thehiveproject/cortex:latest
+    # Cortex 4.0.0-1 — pinned by digest: the deployment pulled `latest`, and
+    # a tag can be moved by the publisher after the fact. This is the exact
+    # image every analyzer result in this repository was produced with.
+    image: thehiveproject/cortex@sha256:f43733e12efda50b045caaaff064c90c2ca6a6cc45a5f8e3dc794c7944739389
     container_name: cortex
     restart: unless-stopped
     depends_on: [elasticsearch]
