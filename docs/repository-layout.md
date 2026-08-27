@@ -9,7 +9,6 @@ homelab-mdr/
 ├── LICENSE
 ├── .github/
 │   └── workflows/validate.yml       # CI: rule XML, compose YAML, link and index checks
-├── homelab-mdr-session-log.md          # phase-by-phase build journal
 ├── detection/
 │   ├── wazuh-rules/                     # custom Wazuh XML rules (numeric prefix = load order)
 │   │   ├── 9985-impact.xml               # 100400–100415 (impact: recovery destruction, encryption, log clearing)
@@ -66,6 +65,7 @@ homelab-mdr/
 ├── docs/
 │   ├── architecture.png                  # lab architecture: network, hosts, traffic paths
 │   ├── phase7-attack-scenario.md        # Phase 7 design doc: threat profile, stage plan, rule sources
+│   ├── session-log.md                   # phase-by-phase build journal
 │   ├── references.md                    # sources that shaped detection content, and what came from each
 │   ├── phase-progress.md                # phase-by-phase completion tracker
 │   ├── phase5-session2-pipeline.md      # Suricata -> Wazuh pipeline build notes
