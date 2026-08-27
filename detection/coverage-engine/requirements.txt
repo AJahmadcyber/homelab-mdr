@@ -1,0 +1,14 @@
+# Direct dependencies of the coverage engine.
+#
+# pypsrp drives the attack over WinRM; requests queries the Wazuh Indexer;
+# PyYAML reads the chain definitions; cryptography is pulled in by pypsrp for
+# NTLM but pinned here because a mismatch surfaces as an opaque auth failure
+# rather than an import error.
+#
+# Versions are the ones the 87.5% baseline was measured on. For the fully
+# resolved set including transitive dependencies, see requirements.lock.txt.
+
+pypsrp==0.9.1
+requests==2.34.2
+PyYAML==6.0.3
+cryptography==50.0.0

@@ -21,6 +21,18 @@ a rule change without re-running the attack. During this build that separation
 paid for itself repeatedly - the same execution record was re-scored six times
 while measurement bugs were found and fixed.
 
+## Setup
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env      # then fill in the endpoint and indexer credentials
+```
+
+`requirements.txt` holds the four direct dependencies at the versions the
+baseline was measured on. `requirements.lock.txt` is the fully resolved set,
+including transitive dependencies, for reproducing the exact environment.
+
 ## Usage
 
 ```bash

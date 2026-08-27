@@ -1,0 +1,12 @@
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+cryptography==50.0.0
+idna==3.19
+pycparser==3.0
+pypsrp==0.9.1
+pyspnego==0.12.1
+PyYAML==6.0.3
+requests==2.34.2
+typing_extensions==4.16.0
+urllib3==2.7.0
