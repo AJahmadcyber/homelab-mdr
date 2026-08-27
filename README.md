@@ -1,5 +1,13 @@
 # Homelab MDR — SOC Detection Engineering Lab
 
+> A detection-and-response lab where the detections are written, the attacks are
+> run against them, and the coverage is measured rather than claimed.
+
+![Rules](https://img.shields.io/badge/custom_rules-72-0F9ED5)
+![Coverage](https://img.shields.io/badge/measured_coverage-87.5%25-156082)
+![ATT&CK](https://img.shields.io/badge/ATT%26CK-v16-0E2841)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
+
 ![Architecture](docs/architecture.png)
 
 ---
