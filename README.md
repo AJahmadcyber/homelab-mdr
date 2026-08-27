@@ -24,6 +24,38 @@ Everything runs locally on a single hypervisor host. All attack simulations targ
 
 ---
 
+## What this actually produces
+
+Four screenshots from the running lab. Everything below happened against the
+live stack; nothing is a mockup.
+
+**A live C2 beacon on the endpoint** — the Sliver implant running in memory
+after the fileless loader stage, which is what the endpoint rules are written
+against.
+
+![Sliver beacon](docs/evidence/phase7/06-sliver-beacon-active.png)
+
+**The SSH key stolen over the encrypted C2 channel** — no file handle on disk,
+no SSH session. This is why detection lands on the *use* of the key rather than
+its theft.
+
+![Key theft over C2](docs/evidence/phase7/07-sliver-key-theft-download.png)
+
+**The resulting ticket** — the lateral-movement chain, correlated cross-host
+from two alerts that would each have been closed as noise alone, with the
+investigation plan the tactic dictates.
+
+![Lateral movement ticket](docs/evidence/phase7/03-thehive-lateral-ticket-chain.png)
+
+**Measured coverage** — produced by running the attack and grading what the SIEM
+returned, not by counting rules.
+
+![Detection coverage](detection/coverage-engine/results/layers/coverage-atomic-automated.svg)
+
+Full evidence set, phase by phase, in [`docs/evidence/`](docs/evidence/).
+
+---
+
 ## Status
 
 | Phase | Scope | State |
@@ -216,9 +248,7 @@ A second pipeline handles **phishing**: a user-reported `.eml` from an IMAP mail
 Detection coverage is measured, not asserted: each technique is executed against
 the running stack and graded on what the SIEM actually produced.
 
-![Detection coverage](detection/coverage-engine/results/layers/coverage-atomic-automated.svg)
-
-The engine runs the attack over WinRM, records exactly when each step ran, then
+The heatmap is above. The engine runs the attack over WinRM, records exactly when each step ran, then
 queries the Wazuh Indexer for the window that follows and grades the outcome.
 Execution and scoring are separate programs, so a chain can be re-graded after a
 rule change without re-running the attack.
