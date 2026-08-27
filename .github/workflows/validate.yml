@@ -1,0 +1,86 @@
+name: validate
+
+# Every check here was run by hand at least once during the build. Automating
+# them is not ceremony: the rule index, the download sources and the install
+# guide all reference files by name, and a rename that silently breaks one of
+# those references is the failure mode this repository is most exposed to.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wazuh rule files are well-formed XML
+        run: |
+          for f in detection/wazuh-rules/*.xml; do
+            python3 -c "import xml.etree.ElementTree as E,sys; E.parse('$f')" \
+              || { echo "INVALID: $f"; exit 1; }
+          done
+          echo "$(ls detection/wazuh-rules/*.xml | wc -l) rule files parsed"
+
+      - name: Compose files are valid YAML
+        run: |
+          pip install --quiet pyyaml
+          for f in $(find . -name 'docker-compose*.yml' -not -path './.git/*'); do
+            python3 -c "import yaml; yaml.safe_load(open('$f'))" \
+              || { echo "INVALID: $f"; exit 1; }
+          done
+
+      - name: Documentation references resolve
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+
+          bad = []
+          for md in pathlib.Path('.').rglob('*.md'):
+              if '.git' in md.parts:
+                  continue
+              for link in re.findall(r'\]\(([^)]+)\)', md.read_text(encoding='utf-8')):
+                  if link.startswith(('http://', 'https://', '#', 'mailto:')):
+                      continue
+                  target = (md.parent / link.split('#')[0]).resolve()
+                  if not target.exists():
+                      bad.append(f"{md}: {link}")
+
+          for b in bad:
+              print("BROKEN", b)
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Rule index matches the rule files
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+
+          readme = pathlib.Path('detection/wazuh-rules/README.md').read_text(encoding='utf-8')
+          bad = []
+          for f in pathlib.Path('detection/wazuh-rules').glob('*.xml'):
+              ids = sorted(int(i) for i in re.findall(r'rule id="(\d+)"', f.read_text(encoding='utf-8')))
+              span = str(ids[0]) if ids[0] == ids[-1] else f"{ids[0]}\u2013{ids[-1]}"
+              if f.name not in readme or span not in readme:
+                  bad.append(f"{f.name} ({span})")
+
+          for b in bad:
+              print("UNINDEXED OR DRIFTED:", b)
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: No secrets, no non-English content
+        run: |
+          if grep -rIlE '(api[_-]?key|password|secret|token)[[:space:]]*[:=][[:space:]]*.?[A-Za-z0-9/_+=-]{16,}' \
+               --exclude-dir=.git . \
+               | grep -v '.env.example' | grep -q .; then
+            echo "possible hardcoded credential found"; exit 1
+          fi
+          # Documentation is English. -I skips binaries.
+          if grep -rIlP '[\x{0590}-\x{08FF}]' --exclude-dir=.git . | grep -q .; then
+            echo "non-English text found in documentation"; exit 1
+          fi
+          echo "clean"
