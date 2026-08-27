@@ -10,6 +10,8 @@ A hands-on lab demonstrating detection engineering with open-source tools: colle
 
 The lab is built in phases — infrastructure and visibility first, then detection content, then response automation, then case management and enrichment, and finally measurement. All eight phases are implemented and working. Phase 7 — a full-lifecycle intrusion modeled on a real 2026 ransomware operation (The Gentlemen / GentleKiller RaaS) — is emulated stage by stage from edge exploitation through to encryption, with every stage validated attack → detection → SOAR → ticket.
 
+Build procedure: [`docs/build/INSTALL.md`](docs/build/INSTALL.md) is the ordered path from nothing to a running lab, with a verification step after each stage and the download sources recorded in [`docs/build/sources.md`](docs/build/sources.md).
+
 Everything runs locally on a single hypervisor host. All attack simulations target only lab VMs under my control.
 
 ---
