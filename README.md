@@ -8,7 +8,7 @@
 
 A hands-on lab demonstrating detection engineering with open-source tools: collecting Windows and Linux telemetry into a SIEM, running a network IDS at the firewall, writing custom detection rules, mapping every detection to MITRE ATT&CK, and hardening the monitoring stack itself. Everything is version-controlled, with each build phase documented alongside its design rationale.
 
-The lab is built in phases — infrastructure and visibility first, then detection content, then response automation, then case management and enrichment. Phases 1–7 are implemented and working. Phase 7 — a full-lifecycle intrusion modeled on a real 2026 ransomware operation (The Gentlemen / GentleKiller RaaS) — is emulated stage by stage from edge exploitation through to encryption, with every stage validated attack → detection → SOAR → ticket.
+The lab is built in phases — infrastructure and visibility first, then detection content, then response automation, then case management and enrichment, and finally measurement. All eight phases are implemented and working. Phase 7 — a full-lifecycle intrusion modeled on a real 2026 ransomware operation (The Gentlemen / GentleKiller RaaS) — is emulated stage by stage from edge exploitation through to encryption, with every stage validated attack → detection → SOAR → ticket.
 
 Everything runs locally on a single hypervisor host. All attack simulations target only lab VMs under my control.
 
@@ -240,7 +240,7 @@ Full methodology, the Navigator layer and the auditable scorecard:
 - **Edge filtering.** Only actionable data is shipped to the SIEM; raw protocol logs stay at the sensor. Keeps the SIEM focused and storage bounded.
 - **Monitor the monitor.** The SIEM is a high-value target, so tampering with the monitoring stack itself is detected (Phase 4.5).
 
-Full rationale in [`docs/`](docs/).
+Full rationale in [`docs/`](docs/). Sources that shaped the detection content — what was taken from each and which rule it produced — are accounted for in [`docs/references.md`](docs/references.md).
 
 ---
 
@@ -306,6 +306,7 @@ homelab-mdr/
 ├── docs/
 │   ├── architecture.png                  # lab architecture: network, hosts, traffic paths
 │   ├── phase7-attack-scenario.md        # Phase 7 design doc: threat profile, stage plan, rule sources
+│   ├── references.md                    # sources that shaped detection content, and what came from each
 │   ├── phase-progress.md                # phase-by-phase completion tracker
 │   ├── phase5-session2-pipeline.md      # Suricata -> Wazuh pipeline build notes
 │   ├── phase5-stream-stability-pull-model.md  # why the collector pulls instead of pushes
@@ -318,16 +319,38 @@ homelab-mdr/
 
 ---
 
-## Roadmap
+## What is not built yet
 
-- **Phase 6 — SOAR (implemented):** 6-A wired Wazuh → n8n triage; 6-B added automated host isolation via the pfSense REST API — gated by an infrastructure allowlist and a circuit breaker — plus professional investigation tickets, validated with a real multi-stage attack chain; 6-C deployed **TheHive 5** (BerkeleyDB + Lucene — no Cassandra, RAM-conscious) as the case-management front end where both ticket streams land, and **Cortex** for enrichment — eight analyzers wired across the two pipelines: VirusTotal, AbuseIPDB, URLhaus, Pulsedive and GoogleDNS on the alert path; EmlParser, EmailRep and Urlscan added on the phishing path. Routing is capability-based, so each observable type only reaches the analyzers that are decisive for it. The ticket builder is an **ATT&CK classifier** — it derives priority, investigation tasks and playbook from the alert's tactic. An **automated phishing-triage pipeline** (n8n → EmlParser → routed Cortex analyzers → reputation-independent signal scoring → TheHive case) mirrors the #1 ticket type an L1 analyst triages.
-  - *Planned enhancements:* block-TTL auto-unblock (read-modify-write on the alias), DNS-level domain/subdomain blocking (Unbound / pfBlockerNG NXDOMAIN, post-enrichment), and a reputation-independent signal scorer for network tickets (mirroring the phishing scorer).
-- **Phase 7 — Adversary emulation (GentleKiller kill-chain) — implemented:** rather than a single ransomware payload, Phase 7 reconstructs the *full intrusion lifecycle* of The Gentlemen / GentleKiller — the #2 RaaS of 2026 (ESET, June 2026) — as an eight-stage attack chain, each stage emulated with professional tooling and validated attack → detection → SOAR → TheHive. **7-A** initial access (CVE-2024-55591 auth-bypass at the edge), **7-B** fileless in-memory execution → C2, **7-C** persistence (writer-agnostic ASEP), **7-D** BYOVD EDR-killer with the driver-load↔kill **correlation**, **7-E** lateral movement (SSH key stolen over the Sliver C2 channel → Ligolo-ng tunnel → valid-account login to the SIEM, correlated cross-host into one Critical ticket), and **7-F** impact — volume enumeration, recovery-capability destruction, mass encryption and event-log clearing. Two original layers the real victims lacked round it out: **L4**, a resilient "surviving channel" that tells a killed agent apart from a powered-off host (endpoint-silence + off-host network-alive), and **L0**, a SIEM self-health monitor that catches the detection engine dying silently. The design centers on *behavioral* detection — the strongest signal against an actor that swaps eight BYOVD driver variants and writes its tooling in Go. Tooling: **Sliver C2** (in-memory implant, C2, key theft over the encrypted channel), **Ligolo-ng** (userland-TUN tunnelling — the pivot that let the external attacker reach the SIEM through the compromised endpoint), **Nuclei** (edge probing), a **controlled PowerShell encryptor** on a throwaway directory for the impact sequence, and **Atomic Red Team** (T1490 series) as an independent second tool — running the same technique through different binaries exposed seven recovery-destruction paths the first pass had missed. Full design: `docs/phase7-attack-scenario.md`.
+The lab is complete as a working system; these are the extensions worth
+building next, listed so the boundary is explicit rather than implied.
 
-- **Phase 8 — Detection coverage engine (planned):** turn the lab from "a lab with detections" into a measurable platform. Three pillars: full **Atomic Red Team attack chains** (recon → LSASS → Mimikatz → browser stealer → DNS exfil, not isolated single tests); an **automated scorer** that runs each chain, queries Wazuh, and reports which techniques fired, which were missed, and the detection latency; and a **live MITRE ATT&CK Navigator layer** (green = proven, red = gap) auto-generated and committed to the repo. Phase 7 (GentleKiller) is the first full chain the engine will measure. Demo layer: **CALDERA** (automated ATT&CK-mapped execution) + **VECTR** (purple-team heatmap and report) + **DeTT&CT** (systematic visibility-gap analysis).
-- **Near-term detection extensions:** Shannon entropy and unique-subdomain cardinality on the DNS analyzer, JA3-based C2 hunting, index retention policy, and promoting high-confidence signatures to inline IPS via the SOAR path.
+**Coverage engine.** One chain is measured. The engine is chain-agnostic, so
+extending it is a matter of writing more chain definitions — credential access
+and discovery are the obvious next two. Scoring a chain against a second
+endpoint would also test whether coverage holds on a host that was not the one
+the rules were written against.
+
+**Response.** Two containment gaps remain deliberate. Block entries have no TTL,
+so an isolated host stays isolated until an operator removes it; the fix needs a
+read-modify-write on the pfSense alias, because a `PATCH` with an address array
+replaces the whole list instead of appending to it. DNS-level blocking
+(Unbound / pfBlockerNG returning NXDOMAIN for an enriched-malicious domain) is
+designed but not wired.
+
+**Detection.** Shannon entropy and unique-subdomain cardinality would strengthen
+the DNS analyzer against a tunnel that stays under the rate threshold. JA3
+fingerprinting would give a TLS-layer C2 signal to sit beside the DNS one. A
+reputation-independent signal scorer for network tickets, mirroring the phishing
+scorer, is the largest single piece of unbuilt work.
+
+**Known limits, carried honestly.** Sysmon EID 10 for `lsass.exe` is dropped by
+Wazuh on event size, so credential-access detection runs on the EID 1 command
+line instead. `auditd` does not capture commands issued over a non-interactive
+SSH session. Suricata's HTTP URI rules see cleartext only, so the edge signature
+is blind once the management interface is behind TLS.
 
 ---
+
 
 ## License
 
