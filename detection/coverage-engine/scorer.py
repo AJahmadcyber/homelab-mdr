@@ -84,11 +84,28 @@ def parse_ts(s):
     return datetime.fromisoformat(s.replace('Z', '+00:00'))
 
 
-def query_alerts(env, t0, t1, agent_id):
-    """Every alert from the target agent inside the step's window."""
-    body = {
-        'size': 200,
-        'sort': [{'@timestamp': {'order': 'asc'}}],
+# A window that overflows this many alerts stops being paginated and the run
+# warns rather than silently dropping the tail. It is a backstop against an
+# unbounded query, not an expected size: the baseline sees 33-70 per window.
+ALERT_PAGE_SIZE = 500
+ALERT_HARD_CAP = 10000
+
+
+def query_alerts(env, t0, t1, agent_id, step_id=None):
+    """Every alert from the target agent inside the step's window.
+
+    Paginates with search_after so a noisy window is read in full rather than
+    truncated at a fixed page. track_total_hits reports the true count; if it
+    ever exceeds what we retrieve (only possible past ALERT_HARD_CAP), the run
+    warns on stderr naming the step and both counts, because a coverage tool
+    that silently under-reports would score a real detection as BLIND.
+    """
+    base = {
+        'size': ALERT_PAGE_SIZE,
+        'track_total_hits': True,
+        # _id breaks ties so search_after is a total order and never re-reads
+        # or skips alerts that share a millisecond timestamp.
+        'sort': [{'@timestamp': {'order': 'asc'}}, {'_id': {'order': 'asc'}}],
         '_source': ['@timestamp', 'rule.id', 'rule.level',
                     'rule.description', 'rule.mitre.id', 'agent.name'],
         'query': {
@@ -101,17 +118,145 @@ def query_alerts(env, t0, t1, agent_id):
             }
         },
     }
+
+    collected = []
+    total = None
+    search_after = None
+    while len(collected) < ALERT_HARD_CAP:
+        body = dict(base)
+        if search_after is not None:
+            body['search_after'] = search_after
+        r = requests.post(
+            '%s/wazuh-alerts-*/_search' % env['INDEXER_URL'],
+            auth=(env['INDEXER_USER'], env['INDEXER_PASS']),
+            headers={'Content-Type': 'application/json'},
+            json=body, verify=False, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        if total is None:
+            total = data['hits']['total']['value']
+        hits = data['hits']['hits']
+        if not hits:
+            break
+        collected.extend(h['_source'] for h in hits)
+        search_after = hits[-1]['sort']
+        if len(hits) < ALERT_PAGE_SIZE:
+            break
+
+    if total is not None and total > len(collected):
+        print('WARNING: step %s window holds %d alerts but only %d were '
+              'retrieved (cap %d) - a detection may be under-reported as BLIND'
+              % (step_id, total, len(collected), ALERT_HARD_CAP),
+              file=sys.stderr)
+
+    return collected
+
+
+def query_archives(env, t0, t1, agent_id, evidence_match):
+    """Count archived events in the window that satisfy a step's evidence
+    contract, returning (total_hits, sample_doc).
+
+    Substring matching is delegated to the Indexer: an event qualifies if it
+    contains ANY of the `contains` substrings, optionally scoped to a Windows
+    event ID. Only the count and a single sample document come back - the
+    count decides the grade, the sample makes that grade auditable.
+
+    allow_no_indices=false turns a missing wazuh-archives-* index into a hard
+    error instead of a silent empty result. logall_json is on but Filebeat's
+    archives shipping may be off, so the index can be absent; when it is, the
+    caller must hear about it rather than read 0 hits as 'no evidence' and
+    quietly leave a step BLIND that was in fact only a RULE gap.
+    """
+    contains = evidence_match.get('contains') or []
+    event_id = evidence_match.get('event_id')
+
+    filters = [
+        {'range': {'@timestamp': {'gte': t0.isoformat(), 'lte': t1.isoformat()}}},
+        {'term': {'agent.id': agent_id}},
+    ]
+    if event_id is not None:
+        filters.append({'term': {'data.win.system.eventID': str(event_id)}})
+
+    # One should-clause per substring; minimum_should_match=1 means ANY match
+    # qualifies. full_log carries the raw event and scriptBlockText the decoded
+    # PowerShell source, so a socket-loop script block is found either way.
+    should = [
+        {'query_string': {
+            'query': '*%s*' % s,
+            'fields': ['full_log', 'data.win.eventdata.scriptBlockText'],
+            'analyze_wildcard': True,
+        }}
+        for s in contains
+    ]
+
+    body = {
+        'size': 1,
+        'track_total_hits': True,
+        '_source': ['@timestamp', 'agent.id', 'data.win.system.eventID',
+                    'data.win.eventdata.scriptBlockText', 'full_log'],
+        'query': {'bool': {
+            'filter': filters,
+            'should': should,
+            'minimum_should_match': 1,
+        }},
+    }
     r = requests.post(
-        '%s/wazuh-alerts-*/_search' % env['INDEXER_URL'],
+        '%s/wazuh-archives-*/_search' % env['INDEXER_URL'],
+        params={'allow_no_indices': 'false'},
         auth=(env['INDEXER_USER'], env['INDEXER_PASS']),
         headers={'Content-Type': 'application/json'},
         json=body, verify=False, timeout=30)
     r.raise_for_status()
-    return [h['_source'] for h in r.json()['hits']['hits']]
+    data = r.json()
+    total = data['hits']['total']['value']
+    hits = data['hits']['hits']
+    sample = hits[0]['_source'] if hits else None
+    return total, sample
 
 
-def score_step(step, alerts):
-    """Grade one step against the alerts observed in its window."""
+def make_archive_probe(env, agent_id):
+    """Build the archive probe passed to score_step.
+
+    The probe is the only path from BLIND (0) to LOGGED (1). It queries the
+    archives for a step's own evidence contract and returns the finding, or
+    None when the index is unreachable. It emits at most one notice per run:
+    a missing index degrades the whole run's LOGGED grading, and repeating
+    that per step would bury the signal.
+    """
+    state = {'notified': False}
+
+    def probe(step, t0, t1):
+        em = step.get('evidence_match') or {}
+        try:
+            count, sample = query_archives(env, t0, t1, agent_id, em)
+        except (requests.RequestException, KeyError, ValueError) as exc:
+            if not state['notified']:
+                print('notice: wazuh-archives-* is not queryable (%s); the '
+                      'LOGGED grade is unavailable this run - steps that scored '
+                      'BLIND stay BLIND rather than being upgraded on a guess'
+                      % type(exc).__name__, file=sys.stderr)
+                state['notified'] = True
+            return None
+        if count and count > 0:
+            return {
+                'contains': em.get('contains', []),
+                'event_id': em.get('event_id'),
+                'event_count': count,
+                'sample': sample,
+            }
+        return {'event_count': count or 0}
+
+    return probe
+
+
+def score_step(step, alerts, archive_probe=None):
+    """Grade one step against the alerts observed in its window.
+
+    archive_probe, when supplied, is a callable(step, t0, t1) -> finding|None.
+    It is consulted ONLY for a step that scored 0 and carries an evidence_match
+    with substrings, and it upgrades to 1 (LOGGED) only on a positive event
+    count. A step with no evidence_match, or unrelated telemetry, stays BLIND.
+    """
     t0 = parse_ts(step['t0_utc'])
     t1 = parse_ts(step.get('t1_utc', step['t0_utc']))
     expect_rules = {str(r) for r in step.get('expect_rules', [])}
