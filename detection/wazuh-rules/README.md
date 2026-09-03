@@ -13,7 +13,7 @@ where it lives.
 
 | File | Rule IDs | Area |
 | --- | --- | --- |
-| `9985-impact.xml` | 100400–100415 | Impact: recovery destruction, encryption, log clearing |
+| `9985-impact.xml` | 100400–100416 | Impact: recovery destruction, encryption, log clearing, renamed-binary masquerading |
 | `9986-lateral-movement.xml` | 100210–100211 | Unauthorized SIEM login, allowlist-suppressed |
 | `9987-siem-health.xml` | 100395–100399 | The detection engine dying silently |
 | `9988-ci-tampering.xml` | 100380–100381 | HVCI, driver blocklist, Credential Guard |
