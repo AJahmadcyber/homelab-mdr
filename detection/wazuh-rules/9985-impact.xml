@@ -165,4 +165,27 @@
     </mitre>
   </rule>
 
+  <!-- T1036.003 - A recovery or log-tampering binary renamed to evade the
+       command-line rules above. originalFileName comes from the PE header and
+       survives a rename; image is the path it ran from. When they disagree the
+       rename itself is the finding: 100401, 100404, 100409 and 100412 all key
+       on a command line that a renamed copy no longer produces, so a copy of
+       vssadmin.exe called svc.exe defeats every one of them.
+
+       The upstream ruleset covers this shape for certutil (92016) and Defender
+       (92019) but not for the recovery binaries, which is the gap this closes.
+       Level 14: renaming vssadmin is not a misconfiguration, and it typically
+       precedes encryption rather than following it. -->
+  <rule id="100416" level="14">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.originalFileName" type="pcre2">(?i)(vssadmin|wbadmin|wevtutil|bcdedit|vssvc)\.exe</field>
+    <field name="win.eventdata.image" type="pcre2" negate="yes">(?i)(vssadmin|wbadmin|wevtutil|bcdedit|vssvc)\.exe</field>
+    <options>no_full_log</options>
+    <description>Masquerading: recovery binary $(win.eventdata.originalFileName) executed as $(win.eventdata.image)</description>
+    <mitre>
+      <id>T1036.003</id>
+      <id>T1490</id>
+    </mitre>
+  </rule>
+
 </group>
