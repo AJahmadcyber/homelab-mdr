@@ -6,9 +6,22 @@
 #  are marked manual there.
 #
 #  Scoring contract per step:
-#    expect_rules  — custom rule IDs that SHOULD fire (score 3)
-#    expect_mitre  — the technique the step exercises
-#    window_s      — how long after execution the scorer looks
+#    expect_rules   — custom rule IDs that SHOULD fire (score 3)
+#    expect_mitre   — the technique the step exercises
+#    window_s       — how long after execution the scorer looks
+#    evidence_match — optional archive probe that separates a RULE gap from a
+#                     true blind spot. Consulted ONLY for a step that scored 0
+#                     (no rule fired). If the raw archives for the step's own
+#                     window contain matching telemetry, the step is upgraded
+#                     from BLIND (0) to LOGGED (1): the SIEM saw it, nothing
+#                     alerted. Fields:
+#                       contains — substrings; an archived event matching ANY
+#                                  of them is evidence (searched in full_log
+#                                  and the decoded PowerShell scriptBlockText)
+#                       event_id — optional Windows event ID to scope the probe
+#                     Never upgrades on unrelated telemetry, and never at all
+#                     when the wazuh-archives-* index is absent — a missing
+#                     index leaves the score at BLIND and prints a notice.
 #
 #  A step with no expect_rules is a deliberate coverage probe:
 #  we run it to find out whether anything catches it at all.
@@ -62,6 +75,19 @@ steps:
     test_numbers: [10]   # PowerShell /24 subnet scan - native, no nmap install
     expect_mitre: [T1046]
     expect_rules: [100320]
+    # Test 10 is a native PowerShell socket loop (System.Net.Sockets.TcpClient),
+    # not a scanner binary, so 100320 (which keys on the nmap/masscan command
+    # line) cannot see it. PowerShell logging still captures the source in
+    # volume - the baseline window held 1,121 matching events and zero alerts.
+    # This contract records that as LOGGED: a RULE gap, not a blind spot.
+    #
+    # Deliberately unscoped by event ID. Measured on that window, 1,113 of the
+    # 1,121 matches arrive as 4103 (module logging) and only 2 as 4104 (script
+    # block). Keying on the script-block channel alone would miss 99% of the
+    # evidence and leave A1 wrongly BLIND.
+    evidence_match:
+      contains: [TcpClient, Net.Sockets]
+
 
   # Two procedures for one technique, on purpose. Rule 100320 keys on a
   # scanner command line (nmap/masscan), so it covers A8 but cannot see A1's

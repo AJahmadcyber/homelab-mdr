@@ -24,7 +24,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -160,7 +160,7 @@ def build_layer(record, name=None, description=None):
             {'name': 'chain', 'value': chain_id},
             {'name': 'target', 'value': '%s (agent %s)' % (
                 record['target']['host'], record['target']['agent_id'])},
-            {'name': 'generated', 'value': datetime.utcnow().isoformat() + 'Z'},
+            {'name': 'generated', 'value': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')},
             {'name': 'source', 'value': 'github.com/AJahmadcyber/homelab-mdr'},
         ],
     }
