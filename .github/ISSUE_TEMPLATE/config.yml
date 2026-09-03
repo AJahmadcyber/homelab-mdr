@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Detection content question
+    url: https://github.com/AJahmadcyber/homelab-mdr/blob/main/detection/wazuh-rules/README.md
+    about: Every custom rule is indexed here with its ID range and MITRE mapping.
+  - name: How coverage is measured
+    url: https://github.com/AJahmadcyber/homelab-mdr/blob/main/detection/coverage-engine/
+    about: Methodology, the Navigator layer, and the scorecard behind the numbers.
