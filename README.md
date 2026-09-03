@@ -237,13 +237,30 @@ the conventional green/yellow/red scale cannot express because it assumes the
 attack ran. **Generic only** records a built-in rule firing with no technique
 mapping and no ticket: neither coverage nor a blind spot, and the single most
 actionable finding a run produces. **Logged only** separates a rules problem
-from a logging problem. Steps whose attack never executed are excluded rather
+from a logging problem, and is the one grade that cannot be read off the alert
+stream: it requires going back to the raw archives to ask whether the telemetry
+arrived at all. A step is only upgraded from blind to logged on evidence
+matching its own `evidence_match` contract in the chain definition. Upgrading on
+any archived event in the window would be worthless here — the runner drives
+every step through PowerShell, so PowerShell telemetry is present in every
+window and every blind spot would silently become a rules problem. Steps whose
+attack never executed are excluded rather
 than counted as gaps, because a setup failure is not a detection failure.
 
 T1046 is **Partial** for a reason worth stating: rule 100320 keys on a scanner
 command line, so it detects the nmap procedure and is blind to a native
 PowerShell socket loop. Coverage belongs to the *procedure*, not the technique —
 reporting the best outcome would hide a real gap behind a working rule.
+
+That gap has since been characterised rather than merely recorded. The archived
+window for the socket-loop step holds 10,581 events from the endpoint, 1,121 of
+which carry the scan code itself, against zero alerts on the technique. The
+telemetry arrived in volume and no rule was watching for it: this is a rule gap,
+not a visibility gap, and the two call for different work. Notably 1,113 of
+those matches arrive as PowerShell module logging (4103) and only 2 as script
+block logging (4104), so an evidence contract scoped to the script-block channel
+would have missed almost all of it and reported a blind spot that was not
+there.
 
 Full methodology, the Navigator layer and the auditable scorecard:
 [`detection/coverage-engine/`](detection/coverage-engine/).
@@ -279,6 +296,14 @@ extending it is a matter of writing more chain definitions — credential access
 and discovery are the obvious next two. Scoring a chain against a second
 endpoint would also test whether coverage holds on a host that was not the one
 the rules were written against.
+
+The **logged-only** grade is implemented but not yet active. `logall_json` is
+enabled on the manager, so the archives exist on disk, but Filebeat ships alerts
+only and there is no `wazuh-archives-*` index to query. The probe reports the
+missing index and leaves the step blind rather than reading zero hits as absence
+of evidence — a scoring tool that cannot tell those apart is worse than one that
+admits it. Enabling archive shipping needs a retention policy sized for it
+first: the archives ran to 4.8 GB in a single month of lab activity.
 
 **Response.** Two containment gaps remain deliberate. Block entries have no TTL,
 so an isolated host stays isolated until an operator removes it; the fix needs a
