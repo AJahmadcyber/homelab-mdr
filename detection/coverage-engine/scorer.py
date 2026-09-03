@@ -24,7 +24,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import requests
 import urllib3
@@ -258,7 +258,7 @@ def main():
 
     summary = {
         'chain_id': run['chain_id'],
-        'scored_utc': datetime.utcnow().isoformat() + 'Z',
+        'scored_utc': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
         'steps_scored': len(graded),
         'coverage_points': total,
         'coverage_max': maximum,
