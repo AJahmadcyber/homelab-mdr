@@ -341,7 +341,7 @@ coverage numbers are measured rather than claimed: a lab that reports full
 coverage has stopped being useful.
 
 Questions about the build or the detection content are best raised as an
-[issue](../../issues) — the answer stays searchable for whoever hits the same
+[issue](https://github.com/AJahmadcyber/homelab-mdr/issues) — the answer stays searchable for whoever hits the same
 thing next. For anything else: ahmad.j.abuzarqa@gmail.com
 
 ---
