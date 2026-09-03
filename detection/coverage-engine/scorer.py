@@ -178,12 +178,20 @@ def query_archives(env, t0, t1, agent_id, evidence_match):
         filters.append({'term': {'data.win.system.eventID': str(event_id)}})
 
     # One should-clause per substring; minimum_should_match=1 means ANY match
-    # qualifies. full_log carries the raw event and scriptBlockText the decoded
-    # PowerShell source, so a socket-loop script block is found either way.
+    # qualifies. Field choice is measured, not assumed: PowerShell module
+    # logging (4103) carries no scriptBlockText at all - its eventdata is
+    # contextInfo and payload, and the executed command line turns up inside
+    # contextInfo's Host Application. Script block logging (4104) is the one
+    # with scriptBlockText. Searching all three plus full_log covers both
+    # channels; searching only scriptBlockText would have missed 1,113 of the
+    # 1,121 matching events in the baseline window.
     should = [
         {'query_string': {
             'query': '*%s*' % s,
-            'fields': ['full_log', 'data.win.eventdata.scriptBlockText'],
+            'fields': ['full_log',
+                       'data.win.eventdata.scriptBlockText',
+                       'data.win.eventdata.contextInfo',
+                       'data.win.eventdata.payload'],
             'analyze_wildcard': True,
         }}
         for s in contains
@@ -193,7 +201,9 @@ def query_archives(env, t0, t1, agent_id, evidence_match):
         'size': 1,
         'track_total_hits': True,
         '_source': ['@timestamp', 'agent.id', 'data.win.system.eventID',
-                    'data.win.eventdata.scriptBlockText', 'full_log'],
+                    'data.win.eventdata.scriptBlockText',
+                    'data.win.eventdata.contextInfo',
+                    'data.win.eventdata.payload', 'full_log'],
         'query': {'bool': {
             'filter': filters,
             'should': should,
