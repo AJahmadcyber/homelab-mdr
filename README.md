@@ -328,6 +328,24 @@ is blind once the management interface is behind TLS.
 ---
 
 
+## Contact
+
+Built and maintained by **Ahmad Abuzarqa** — a cybersecurity graduate based in
+Jordan, working toward SOC and detection engineering.
+
+This lab exists because reading about detection is not the same as watching a
+rule fail on real telemetry and finding out why. Every rule here was written
+against something that actually ran, and the gaps are documented rather than
+tidied away, because the gaps are where the learning is. That is also why the
+coverage numbers are measured rather than claimed: a lab that reports full
+coverage has stopped being useful.
+
+Questions about the build or the detection content are best raised as an
+[issue](https://github.com/AJahmadcyber/homelab-mdr/issues) — the answer stays searchable for whoever hits the same
+thing next. For anything else: ahmad.j.abuzarqa@gmail.com
+
+---
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
