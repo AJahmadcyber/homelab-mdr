@@ -1,0 +1,86 @@
+name: Build problem
+description: A step in the build guide did not work on your setup
+labels: ["build"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening this, check the phase table in the README — several
+        steps carry a note about a failure that is expected on first run.
+
+  - type: input
+    id: step
+    attributes:
+      label: Which step
+      description: The phase and step you were on, or the document you were following.
+      placeholder: "Phase 4, step 12 — deploying the Wazuh agent on win-ep"
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: What you ran
+      description: The exact command, as you ran it.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: What happened
+      description: >
+        The output or error. Paste it as text rather than a screenshot where
+        you can — error text is searchable by the next person who hits it.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: components
+    attributes:
+      label: Which components are running
+      multiple: true
+      options:
+        - Wazuh manager
+        - Wazuh indexer
+        - Wazuh dashboard
+        - TheHive
+        - Cortex
+        - n8n
+        - pfSense + Suricata
+        - Velociraptor
+        - Windows endpoint
+    validations:
+      required: true
+
+  - type: input
+    id: ram
+    attributes:
+      label: RAM allocated to the VM
+      description: >
+        Worth stating even when it seems unrelated. This stack runs three JVM
+        engines, and several failures that look like configuration problems
+        are the host running out of memory.
+      placeholder: "8 GB"
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      placeholder: "Wazuh 4.9.0, Ubuntu 24.04, VirtualBox 7.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: checked
+    attributes:
+      label: What you already checked
+      description: >
+        Container status, service logs, disk space, agent connectivity —
+        whatever you looked at first. It saves a round trip.
+    validations:
+      required: true
