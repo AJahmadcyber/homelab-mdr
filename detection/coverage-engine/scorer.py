@@ -299,7 +299,22 @@ def score_step(step, alerts, archive_probe=None):
     elif generic:
         grade = 2
     else:
-        grade = 0   # refined to 1 by the archives probe below
+        grade = 0
+
+    # BLIND -> LOGGED refinement. A step with no rule hit is only upgraded on
+    # its OWN evidence: telemetry proving the technique reached the SIEM even
+    # though nothing alerted. This separates a RULE gap (logged, unseen) from a
+    # true blind spot. It fires only for grade 0, only with a non-empty
+    # evidence contract, and only on a positive count - so background noise
+    # (the secwatch heartbeat, the runner's own PowerShell) can never upgrade a
+    # step, and a missing archives index leaves the grade untouched.
+    logged_evidence = None
+    em = step.get('evidence_match')
+    if grade == 0 and archive_probe is not None and em and em.get('contains'):
+        finding = archive_probe(step, t0, t1)
+        if finding and finding.get('event_count', 0) > 0:
+            grade = 1
+            logged_evidence = finding
 
     detect_latency = None
     pool = matched or custom or generic  # never `unrelated`
@@ -328,6 +343,7 @@ def score_step(step, alerts, archive_probe=None):
         'latency_basis': 'seconds from end of attack execution to first matching alert',
         'matched_alerts': matched[:10],
         'generic_alerts': generic[:5],
+        'logged_evidence': logged_evidence,
     }
 
 
@@ -346,6 +362,8 @@ def main():
     print()
     print('%-4s %-34s %-9s %-8s %s' % ('ID', 'STEP', 'GRADE', 'LATENCY', 'RULES FIRED'))
     print('-' * 92)
+
+    probe = make_archive_probe(env, agent_id)
 
     scored = []
     for idx, step in enumerate(run['steps']):
@@ -385,14 +403,18 @@ def main():
             if 't0_utc' in nxt:
                 win_end = min(win_end, parse_ts(nxt['t0_utc']))
 
-        alerts = query_alerts(env, exec_start, win_end, agent_id)
-        sc = score_step(step, alerts)
+        alerts = query_alerts(env, exec_start, win_end, agent_id, step['id'])
+        sc = score_step(step, alerts, archive_probe=probe)
 
         fired = sc['expected_fired'] or sc['other_custom_rules'] or sc['generic_rules']
         lat = '%.1fs' % sc['detection_latency_s'] if sc['detection_latency_s'] is not None else '-'
+        if sc['grade'] == 1 and sc.get('logged_evidence'):
+            detail = 'logged: %d archived events, no alert' % (
+                sc['logged_evidence'].get('event_count', 0))
+        else:
+            detail = ','.join(fired[:6]) or '(none)'
         print('%-4s %-34s %-9s %-8s %s' % (
-            step['id'], step['name'][:34], sc['grade_label'], lat,
-            ','.join(fired[:6]) or '(none)'))
+            step['id'], step['name'][:34], sc['grade_label'], lat, detail))
 
         scored.append({**step, 'score': sc})
 
