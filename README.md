@@ -306,12 +306,20 @@ of evidence — a scoring tool that cannot tell those apart is worse than one th
 admits it. Enabling archive shipping needs a retention policy sized for it
 first: the archives ran to 4.8 GB in a single month of lab activity.
 
-**Response.** Two containment gaps remain deliberate. Block entries have no TTL,
-so an isolated host stays isolated until an operator removes it; the fix needs a
-read-modify-write on the pfSense alias, because a `PATCH` with an address array
-replaces the whole list instead of appending to it. DNS-level blocking
-(Unbound / pfBlockerNG returning NXDOMAIN for an enriched-malicious domain) is
-designed but not wired.
+**Response.** Two containment gaps remain deliberate. Block entries have no
+TTL, so an isolated host stays isolated until an operator removes it. The
+read-modify-write the removal needs is already in place — a `PATCH` replaces
+the whole address array rather than appending to it, so the alias is read
+before it is written, under a lock — but nothing yet decides when an entry has
+outlived its reason. DNS-level blocking (Unbound / pfBlockerNG returning
+NXDOMAIN for an enriched-malicious domain) is designed but not wired.
+
+What the blocker does report honestly is failure. Every pfSense call is
+checked, and a change the firewall rejects is returned as `block_failed`
+rather than printed as success — a ticket claiming a containment that never
+happened is worse than one that admits the block did not land. The block is
+recorded against the circuit breaker only on success, so a run of failures
+cannot exhaust the budget that protects against a real alert storm.
 
 **Detection.** Shannon entropy and unique-subdomain cardinality would strengthen
 the DNS analyzer against a tunnel that stays under the rate threshold. JA3
