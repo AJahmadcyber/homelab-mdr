@@ -189,7 +189,17 @@ def main():
             sys.exit(0)
 
         # ---- passed safety → block ----
-        alias = api_get_alias()
+        # The fetch is inside the same guard as the write: an unreachable or
+        # unauthorised pfSense must produce the same structured block_failed
+        # the SOAR path can act on, not a traceback on stderr.
+        try:
+            alias = api_get_alias()
+        except requests.RequestException as exc:
+            log(f"BLOCK FAILED: could not read the alias for {ip} ({type(exc).__name__})")
+            print(json.dumps({"action": "block_failed", "ip": ip,
+                              "reason": type(exc).__name__, "stage": "read_alias"}))
+            sys.exit(4)
+
         if alias is None:
             log("ERROR: soar_blocklist alias not found"); sys.exit(3)
 
@@ -210,7 +220,7 @@ def main():
         except requests.RequestException as exc:
             log(f"BLOCK FAILED: pfSense rejected the change for {ip} ({type(exc).__name__})")
             print(json.dumps({"action": "block_failed", "ip": ip,
-                              "reason": type(exc).__name__}))
+                              "reason": type(exc).__name__, "stage": "apply"}))
             sys.exit(4)
 
         # Recorded only on success: a failed block must not consume breaker budget.
