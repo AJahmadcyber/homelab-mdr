@@ -24,12 +24,31 @@ ALLOWLIST = {
     "10.10.10.10":  "siem (SIEM + n8n)",
     "10.10.10.2":   "ThinkPad host",
 }
-# Also never block the entire lab subnet's critical infra range if desired:
-PROTECTED_NETS = [ipaddress.ip_network("10.10.10.0/24")]  # warn-only, see logic
+# Networks that are never blocked, checked alongside the host allowlist above.
+# Deliberately empty: the obvious candidate, 10.10.10.0/24, is the network the
+# monitored endpoint sits on, and protecting it wholesale would refuse every
+# block this path is built to perform. The check is wired up so a future
+# range - a server segment, a management VLAN - is one entry away.
+PROTECTED_NETS = []
 
 # --- SAFETY CONTROL 2: circuit breaker ---
 CB_MAX_BLOCKS = 5        # max blocks
 CB_WINDOW_MIN = 10       # within this many minutes
+
+def normalize(addr):
+    """Parse an address into a comparable form.
+
+    IPv4-mapped IPv6 is unwrapped to its IPv4 form. Python treats
+    IPv6Address('::ffff:10.10.10.1') and IPv4Address('10.10.10.1') as unequal,
+    so without this an allowlisted address written in its mapped form - in
+    either dotted-quad or hex notation - compares as a different host and
+    passes the one gate built to protect it.
+    """
+    obj = ipaddress.ip_address(addr)
+    if isinstance(obj, ipaddress.IPv6Address) and obj.ipv4_mapped:
+        obj = obj.ipv4_mapped
+    return obj
+
 
 def log(msg):
     print(f"[{datetime.utcnow().isoformat()}] {msg}")
@@ -96,14 +115,27 @@ def main():
 
     # validate IP format
     try:
-        ipaddress.ip_address(ip)
+        ip_obj = normalize(ip)
     except ValueError:
         log(f"ERROR: invalid IP '{ip}'"); sys.exit(2)
 
     # ---- SAFETY 1: allowlist ----
-    if ip in ALLOWLIST:
-        log(f"BLOCKED-BY-SAFETY: {ip} is protected infra ({ALLOWLIST[ip]}) — REFUSING to block")
-        print(json.dumps({"action": "refused", "reason": "allowlist", "ip": ip, "detail": ALLOWLIST[ip]}))
+    # Compared as normalised addresses, not strings, so alternate spellings of a
+    # protected address cannot slip past the gate.
+    protected = None
+    for allowed, label in ALLOWLIST.items():
+        if ip_obj == normalize(allowed):
+            protected = label
+            break
+    if protected is None:
+        for net in PROTECTED_NETS:
+            if ip_obj in net:
+                protected = f"inside protected network {net}"
+                break
+
+    if protected is not None:
+        log(f"BLOCKED-BY-SAFETY: {ip} is protected infra ({protected}) — REFUSING to block")
+        print(json.dumps({"action": "refused", "reason": "allowlist", "ip": ip, "detail": protected}))
         sys.exit(0)
 
     state = load_state()
