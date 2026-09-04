@@ -57,6 +57,7 @@ def check_circuit_breaker(state):
 def api_get_alias():
     r = requests.get(f"https://{PF_HOST}/api/v2/firewall/aliases",
                      headers={"X-API-Key": API_KEY}, verify=False, timeout=10)
+    r.raise_for_status()
     for a in r.json()["data"]:
         if a["id"] == ALIAS_ID:
             return a
@@ -69,12 +70,21 @@ def api_add_ip(current, ip):
     r = requests.patch(f"https://{PF_HOST}/api/v2/firewall/alias",
                        headers={"X-API-Key": API_KEY, "Content-Type": "application/json"},
                        json={"id": ALIAS_ID, "address": new_addr}, verify=False, timeout=10)
+    r.raise_for_status()
     return r.json()
 
 def api_apply():
-    requests.post(f"https://{PF_HOST}/api/v2/firewall/apply",
-                  headers={"X-API-Key": API_KEY, "Content-Type": "application/json"},
-                  json={}, verify=False, timeout=15)
+    """Apply the pending firewall change.
+
+    The response is checked rather than discarded. Without this the script
+    reports BLOCKED whether or not pfSense accepted the change, and the
+    ticket would claim a containment that never happened - the one failure
+    mode this whole path exists to avoid.
+    """
+    r = requests.post(f"https://{PF_HOST}/api/v2/firewall/apply",
+                      headers={"X-API-Key": API_KEY, "Content-Type": "application/json"},
+                      json={}, verify=False, timeout=15)
+    r.raise_for_status()
 
 def main():
     if len(sys.argv) < 2:
@@ -116,10 +126,16 @@ def main():
         print(json.dumps({"action": "already_blocked", "ip": ip}))
         sys.exit(0)
 
-    resp = api_add_ip(alias, ip)
-    api_apply()
+    try:
+        api_add_ip(alias, ip)
+        api_apply()
+    except requests.RequestException as exc:
+        log(f"BLOCK FAILED: pfSense rejected the change for {ip} ({type(exc).__name__})")
+        print(json.dumps({"action": "block_failed", "ip": ip,
+                          "reason": type(exc).__name__}))
+        sys.exit(4)
 
-    # record for circuit breaker
+    # Recorded only on success: a failed block must not consume breaker budget.
     state["blocks"].append(datetime.utcnow().isoformat())
     save_state(state)
 
