@@ -7,7 +7,7 @@ after passing the infrastructure allowlist and circuit-breaker checks.
 Usage: soar-block.py <src_ip>
 Env:   PF_API_KEY (required)
 """
-import sys, os, json, time, ipaddress, urllib3, requests
+import sys, os, json, time, fcntl, contextlib, ipaddress, urllib3, requests
 from datetime import datetime, timedelta
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -50,8 +50,45 @@ def normalize(addr):
     return obj
 
 
+def _parseable(addr):
+    """True if addr is a bare IP. Alias entries can also be CIDR ranges or
+    hostnames, which are not comparable to a single address and are skipped."""
+    try:
+        normalize(addr)
+        return True
+    except ValueError:
+        return False
+
+
 def log(msg):
     print(f"[{datetime.utcnow().isoformat()}] {msg}")
+
+LOCK_FILE = STATE_FILE + ".lock"
+
+
+@contextlib.contextmanager
+def state_lock():
+    """Serialise the whole read-decide-write path across concurrent runs.
+
+    n8n can invoke this script several times at once during an alert burst -
+    exactly when the circuit breaker matters most. Without a lock, two runs
+    read the same block count, both find room under the limit, and both write
+    it back: the breaker permits more blocks than its ceiling allows.
+
+    The same window covers the alias read-modify-write. A PATCH replaces the
+    whole address array rather than appending to it, so two runs interleaving
+    there would silently drop one of the two blocks.
+
+    A separate lock file is used rather than the state file itself, so the
+    lock survives the state file being rewritten.
+    """
+    with open(LOCK_FILE, "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
 
 def load_state():
     try:
@@ -138,38 +175,47 @@ def main():
         print(json.dumps({"action": "refused", "reason": "allowlist", "ip": ip, "detail": protected}))
         sys.exit(0)
 
-    state = load_state()
+    # Everything from here to the final save runs under one lock: the breaker
+    # decision, the alias read-modify-write, and the record of the block.
+    with state_lock():
+        state = load_state()
 
-    # ---- SAFETY 2: circuit breaker ----
-    ok, count = check_circuit_breaker(state)
-    if not ok:
-        log(f"CIRCUIT-BREAKER TRIPPED: {count} blocks in last {CB_WINDOW_MIN}min (max {CB_MAX_BLOCKS}) — REFUSING")
+        # ---- SAFETY 2: circuit breaker ----
+        ok, count = check_circuit_breaker(state)
+        if not ok:
+            log(f"CIRCUIT-BREAKER TRIPPED: {count} blocks in last {CB_WINDOW_MIN}min (max {CB_MAX_BLOCKS}) — REFUSING")
+            save_state(state)
+            print(json.dumps({"action": "refused", "reason": "circuit_breaker", "ip": ip, "recent_blocks": count}))
+            sys.exit(0)
+
+        # ---- passed safety → block ----
+        alias = api_get_alias()
+        if alias is None:
+            log("ERROR: soar_blocklist alias not found"); sys.exit(3)
+
+        # Normalised for the same reason as the allowlist: a differently
+        # spelled entry already in the alias would read as absent and be
+        # appended a second time.
+        already = any(ip_obj == normalize(a)
+                      for a in alias.get("address", [])
+                      if _parseable(a))
+        if already:
+            log(f"already blocked: {ip}")
+            print(json.dumps({"action": "already_blocked", "ip": ip}))
+            sys.exit(0)
+
+        try:
+            api_add_ip(alias, ip)
+            api_apply()
+        except requests.RequestException as exc:
+            log(f"BLOCK FAILED: pfSense rejected the change for {ip} ({type(exc).__name__})")
+            print(json.dumps({"action": "block_failed", "ip": ip,
+                              "reason": type(exc).__name__}))
+            sys.exit(4)
+
+        # Recorded only on success: a failed block must not consume breaker budget.
+        state["blocks"].append(datetime.utcnow().isoformat())
         save_state(state)
-        print(json.dumps({"action": "refused", "reason": "circuit_breaker", "ip": ip, "recent_blocks": count}))
-        sys.exit(0)
-
-    # ---- passed safety → block ----
-    alias = api_get_alias()
-    if alias is None:
-        log("ERROR: soar_blocklist alias not found"); sys.exit(3)
-
-    if ip in alias.get("address", []):
-        log(f"already blocked: {ip}")
-        print(json.dumps({"action": "already_blocked", "ip": ip}))
-        sys.exit(0)
-
-    try:
-        api_add_ip(alias, ip)
-        api_apply()
-    except requests.RequestException as exc:
-        log(f"BLOCK FAILED: pfSense rejected the change for {ip} ({type(exc).__name__})")
-        print(json.dumps({"action": "block_failed", "ip": ip,
-                          "reason": type(exc).__name__}))
-        sys.exit(4)
-
-    # Recorded only on success: a failed block must not consume breaker budget.
-    state["blocks"].append(datetime.utcnow().isoformat())
-    save_state(state)
 
     log(f"BLOCKED: {ip} added to soar_blocklist (recent blocks: {count+1})")
     print(json.dumps({"action": "blocked", "ip": ip, "recent_blocks": count+1}))
