@@ -6,6 +6,13 @@ after passing the infrastructure allowlist and circuit-breaker checks.
 
 Usage: soar-block.py <src_ip>
 Env:   PF_API_KEY (required)
+
+Validated against the live firewall across every decision path: a protected
+address is refused, the same address in IPv4-mapped IPv6 form is refused too,
+an unauthorised API key returns block_failed rather than a traceback, a real
+block reaches the alias (confirmed by reading it back from pfSense, not from
+this script's own output), and a repeat of the same address returns
+already_blocked instead of appending it twice.
 """
 import sys, os, json, time, fcntl, contextlib, ipaddress, urllib3, requests
 from datetime import datetime, timedelta
