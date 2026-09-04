@@ -118,3 +118,32 @@ def test_lock_is_released_after_the_block(sb):
         pass
     with sb.state_lock():
         pass
+
+
+# --- failure is structured, not a traceback --------------------------------
+
+def test_api_helpers_raise_a_requests_exception_the_caller_can_catch(sb, monkeypatch):
+    """Every pfSense call must fail as a RequestException.
+
+    main() catches that type and returns a structured block_failed. A helper
+    raising anything else escapes the guard and reaches n8n as a traceback —
+    which is what happened with api_get_alias() before it was guarded.
+    """
+    import requests
+
+    class Response:
+        status_code = 401
+        def raise_for_status(self):
+            raise requests.exceptions.HTTPError("401", response=self)
+        def json(self):
+            return {"data": []}
+
+    monkeypatch.setattr(sb.requests, "get", lambda *a, **k: Response())
+    monkeypatch.setattr(sb.requests, "post", lambda *a, **k: Response())
+    monkeypatch.setattr(sb.requests, "patch", lambda *a, **k: Response())
+
+    for call in (sb.api_get_alias,
+                 lambda: sb.api_add_ip({"address": []}, "192.0.2.99"),
+                 sb.api_apply):
+        with pytest.raises(requests.RequestException):
+            call()
