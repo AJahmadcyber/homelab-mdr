@@ -317,9 +317,26 @@ NXDOMAIN for an enriched-malicious domain) is designed but not wired.
 What the blocker does report honestly is failure. Every pfSense call is
 checked, and a change the firewall rejects is returned as `block_failed`
 rather than printed as success — a ticket claiming a containment that never
-happened is worse than one that admits the block did not land. The block is
-recorded against the circuit breaker only on success, so a run of failures
-cannot exhaust the budget that protects against a real alert storm.
+happened is worse than one that admits the block did not land. The failure
+carries a stage marker, so an unreachable firewall is distinguishable from a
+rejected change without reading the log. The block is recorded against the
+circuit breaker only on success, so a run of failures cannot exhaust the
+budget that protects against a real alert storm.
+
+Both halves of that were then run against the live firewall rather than
+argued for. **The success path:** a real address was blocked, and the alias
+was read back from pfSense afterwards to confirm the entry had actually
+landed there — not inferred from the script reporting success, which is the
+precise habit these changes exist to break. Running the same block again
+returned `already_blocked` rather than appending the address twice.
+**The failure path:** the same block was attempted with an invalid API key,
+and pfSense answered 401. The script returned the structured `block_failed`
+with its stage, and exited 4, instead of the traceback it would have
+produced before.
+
+That failure run is also where a bug survived fifteen passing unit tests.
+The tests exercise each function alone; the gap was in how `main()` composed
+them, and only the whole path against a real firewall exposed it.
 
 **Detection.** Shannon entropy and unique-subdomain cardinality would strengthen
 the DNS analyzer against a tunnel that stays under the rate threshold. JA3
