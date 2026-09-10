@@ -34,6 +34,35 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 HERE = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_RULE_FLOOR = 100000
 
+# Alerts are matched on WHEN THE ENDPOINT LOGGED THE EVENT, not when the
+# manager ingested it. Measured on this lab: ingest lag min -2s, median
+# 449s, max 645s over 118 alerts. Scoring on @timestamp mixes pipeline
+# backlog into detection coverage and reports a rule that fired as BLIND.
+# The indexer range filter is still on @timestamp, so the query window is
+# widened by this much and the real window is applied in memory.
+MAX_INGEST_LAG_S = 900
+
+# win-ep has no working time sync: w32time cannot use pfSense (root dispersion
+# never settles) and VBoxService syncs on a 20-minute threshold, so a skew of
+# seconds is never corrected. Measured 2026-09-10: win-ep is 15.25s behind the
+# SIEM, round-trip 1.45s. Endpoint event times therefore arrive slightly in the
+# PAST relative to the step's own t0, and a real detection falls outside its
+# window. This is a known lab constraint, not a scorer behaviour: fixing the
+# clock is the real repair and this margin should shrink to a few seconds once
+# it is done. Set to roughly twice the measured skew, well under the ~185s gap
+# between steps, so it can never pull a neighbouring step's alert into scope.
+CLOCK_SKEW_SLACK_S = 30
+
+# Endpoint event time is only trustworthy while the endpoint clock is. On this
+# lab win-ep has no stable sync (w32time cannot use pfSense, and VBoxService
+# fights whatever else touches the clock), and measured skew moved between
+# -41s and +48s inside one hour. Ingest lag, by contrast, collapsed to under a
+# second once the manager's vulnerability-detector stopped burning a core, so
+# @timestamp is now the more accurate of the two. USE_EVENT_TIME exists so this
+# can be flipped back the moment the clock is fixed - the endpoint clock is the
+# right basis in principle, and this is a measured concession, not a rewrite.
+USE_EVENT_TIME = False
+
 GRADE = {4: 'PREVENTED', 3: 'DETECTED', 2: 'GENERIC', 1: 'LOGGED', 0: 'BLIND'}
 
 # PREVENTED is not on the conventional green/yellow/red scale, because that
@@ -91,6 +120,48 @@ ALERT_PAGE_SIZE = 500
 ALERT_HARD_CAP = 10000
 
 
+def event_ts(alert):
+    """When the endpoint recorded the event, falling back to ingest time.
+
+    Sysmon carries utcTime ('2026-09-10 08:35:00.588') and systemTime
+    ('...T08:35:00.6270505Z' - seven fractional digits, which strptime %f
+    rejects, hence the truncation). Suricata and auditd alerts carry neither,
+    so those fall back to @timestamp: for them ingest time is the only time
+    there is, and silently dropping them would be worse than a small bias.
+    """
+    if not USE_EVENT_TIME:
+        return parse_ts(alert['@timestamp'])
+    win = (alert.get('data') or {}).get('win') or {}
+    raw = ((win.get('eventdata') or {}).get('utcTime')
+           or (win.get('system') or {}).get('systemTime'))
+    if raw:
+        txt = raw.strip().replace('T', ' ').rstrip('Z')
+        if '.' in txt:
+            head, frac = txt.split('.', 1)
+            txt = '%s.%s' % (head, frac[:6])
+            fmt = '%Y-%m-%d %H:%M:%S.%f'
+        else:
+            fmt = '%Y-%m-%d %H:%M:%S'
+        try:
+            return datetime.strptime(txt, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    return parse_ts(alert['@timestamp'])
+
+
+def alerts_in_window(alerts, t0, t1, slack_s=CLOCK_SKEW_SLACK_S):
+    """Keep alerts whose EVENT time falls in the step window.
+
+    The indexer range filter runs on @timestamp and is deliberately widened by
+    MAX_INGEST_LAG_S, so this is what actually bounds the step: without it a
+    late-ingested alert from a LATER step would be credited to this one.
+    slack_s allows an alert stamped microseconds before t0 (see the latency
+    clamp in score_step).
+    """
+    lo = t0 - timedelta(seconds=slack_s)
+    return [a for a in alerts if lo <= event_ts(a) <= t1]
+
+
 def query_alerts(env, t0, t1, agent_id, step_id=None):
     """Every alert from the target agent inside the step's window.
 
@@ -107,7 +178,9 @@ def query_alerts(env, t0, t1, agent_id, step_id=None):
         # or skips alerts that share a millisecond timestamp.
         'sort': [{'@timestamp': {'order': 'asc'}}, {'_id': {'order': 'asc'}}],
         '_source': ['@timestamp', 'rule.id', 'rule.level',
-                    'rule.description', 'rule.mitre.id', 'agent.name'],
+                    'rule.description', 'rule.mitre.id', 'agent.name',
+                    'data.win.eventdata.utcTime',
+                    'data.win.system.systemTime'],
         'query': {
             'bool': {
                 'filter': [
@@ -277,14 +350,20 @@ def score_step(step, alerts, archive_probe=None):
     for a in alerts:
         rid = str(a.get('rule', {}).get('id', ''))
         mitre = a.get('rule', {}).get('mitre', {}).get('id', []) or []
+        ets = event_ts(a)
         entry = {
             'rule_id': rid,
             'level': a.get('rule', {}).get('level'),
             'description': a.get('rule', {}).get('description', '')[:110],
             'mitre': mitre,
             'ts': a.get('@timestamp'),
-            'latency_s': round((parse_ts(a['@timestamp']) - t1).total_seconds(), 2),
-            'latency_from_call_s': round((parse_ts(a['@timestamp']) - t0).total_seconds(), 2),
+            'event_ts': ets.isoformat(),
+            # kept separate on purpose: a slow pipeline is an operational
+            # finding, not a detection gap, and collapsing the two was the
+            # bug this field exists to prevent recurring.
+            'ingest_lag_s': round((parse_ts(a['@timestamp']) - ets).total_seconds(), 2),
+            'latency_s': round((ets - t1).total_seconds(), 2),
+            'latency_from_call_s': round((ets - t0).total_seconds(), 2),
         }
         is_custom = rid.isdigit() and int(rid) >= CUSTOM_RULE_FLOOR
         on_technique = bool(set(mitre) & expect_mitre)
@@ -350,7 +429,10 @@ def score_step(step, alerts, archive_probe=None):
         'unrelated_rules': sorted({e['rule_id'] for e in unrelated}),
         'unrelated_count': len(unrelated),
         'detection_latency_s': detect_latency,
-        'latency_basis': 'seconds from end of attack execution to first matching alert',
+        'latency_basis': 'seconds from end of attack execution to the first '
+                         'matching alert, measured on endpoint event time',
+        'max_ingest_lag_s': (max((e['ingest_lag_s'] for e in pool), default=None)
+                             if pool else None),
         'matched_alerts': matched[:10],
         'generic_alerts': generic[:5],
         'logged_evidence': logged_evidence,
@@ -413,7 +495,20 @@ def main():
             if 't0_utc' in nxt:
                 win_end = min(win_end, parse_ts(nxt['t0_utc']))
 
-        alerts = query_alerts(env, exec_start, win_end, agent_id, step['id'])
+        raw_alerts = query_alerts(
+            env, exec_start, win_end + timedelta(seconds=MAX_INGEST_LAG_S),
+            agent_id, step['id'])
+        # 5s of slack: an alert can be stamped just before t0 (see the latency
+        # clamp in score_step) without being outside the step.
+        alerts = alerts_in_window(raw_alerts, exec_start, win_end)
+        newest = max([parse_ts(a['@timestamp']) for a in raw_alerts],
+                     default=None)
+        if newest is not None and newest < win_end:
+            sys.stderr.write(
+                'warning: %s - newest ingested alert is %s, before this '
+                'window ends (%s). The pipeline has not caught up; a BLIND '
+                'grade here may be premature.\n'
+                % (step['id'], newest.isoformat(), win_end.isoformat()))
         sc = score_step(step, alerts, archive_probe=probe)
 
         fired = sc['expected_fired'] or sc['other_custom_rules'] or sc['generic_rules']
