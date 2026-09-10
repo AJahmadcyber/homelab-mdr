@@ -196,12 +196,26 @@ def main():
 
     run_start = utc_now()
     records = []
+    # ONE session for the whole chain, reconnecting only on failure.
+    #
+    # A session per step raced against itself on this 2 GB endpoint: each step
+    # spawns a wsmprovhost.exe while the previous one is still tearing down,
+    # and WinRM intermittently refused to launch the host process
+    # (WSManFault 0x80338005) or timed out establishing the session. The
+    # failure moved between steps run to run - C2 in one run, C1 in the next -
+    # which is what a race looks like, not a bad step. Reusing the session also
+    # removes ~10s of NTLM setup from every step.
+    client = new_client()
     for step in steps:
         label = '%s %s' % (step['id'], step['name'])
         print('  %-46s ' % label[:46], end='', flush=True)
         try:
-            # fresh connection per step: see note above
-            rec = run_step(new_client(), step, defaults, args.cleanup)
+            try:
+                rec = run_step(client, step, defaults, args.cleanup)
+            except Exception:
+                # a dead session must not be scored as a failed technique
+                client = new_client()
+                rec = run_step(client, step, defaults, args.cleanup)
             flag = 'ERR' if rec['exec_error'] else 'ok '
             print('%s  %5.1fs' % (flag, rec['duration_s']))
         except Exception as exc:

