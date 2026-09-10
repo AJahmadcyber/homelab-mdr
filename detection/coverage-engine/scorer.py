@@ -414,8 +414,16 @@ def score_step(step, alerts, archive_probe=None):
         # PowerShell invocation wrapping it. A small negative value means
         # immediate detection, not a broken clock - clamp it rather than
         # publish a negative latency.
-        if -2.0 < detect_latency < 0:
-            detect_latency = 0.0
+        if detect_latency < 0:
+            # The alert predates t1, so the detection happened DURING the
+            # command, not after it - t1 is simply the wrong reference for a
+            # step whose command outlives the behaviour that triggers the
+            # rule. C4's cradle fires on the script block in the first second
+            # while the command spends ~25s waiting on a dead port, which read
+            # as -24s of latency. Measure such alerts from t0 instead, and
+            # floor at zero for the sub-second case where the event is stamped
+            # microseconds before the step's own start.
+            detect_latency = max(0.0, min(e['latency_from_call_s'] for e in pool))
 
     return {
         'grade': grade,

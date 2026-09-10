@@ -121,14 +121,25 @@ def test_missing_archive_index_leaves_grade_blind():
     assert sc['logged_evidence'] is None
 
 
-def test_small_negative_latency_is_clamped_to_zero():
-    # An on-technique alert stamped just before t1 (logged the instant the
-    # command ran) yields a small negative latency; it is clamped to 0.0, not
-    # published as a negative number.
+def test_alert_before_t1_is_measured_from_t0():
+    # An alert stamped before the command finished was detected DURING it, so
+    # t1 is the wrong reference: measuring from it produces a negative latency
+    # (C4 read as -24s while its cradle fired in the first second of a 25s
+    # command). Such alerts are measured from t0, which is both non-negative
+    # and truthful - here the rule really did take 9s of the 10s command.
     step = make_step(expect_rules=[])
     alerts = [make_alert(100999, ['T1046'], ts='2026-01-01T00:00:09+00:00')]
     sc = scorer.score_step(step, alerts)
     assert sc['grade'] == 3
+    assert sc['detection_latency_s'] == 9.0
+
+
+def test_alert_before_t0_floors_at_zero():
+    # The sub-second case: the event is stamped microseconds before the step's
+    # own start. Report immediate detection, never a negative number.
+    step = make_step(expect_rules=[])
+    alerts = [make_alert(100999, ['T1046'], ts='2025-12-31T23:59:59.500000+00:00')]
+    sc = scorer.score_step(step, alerts)
     assert sc['detection_latency_s'] == 0.0
 
 
